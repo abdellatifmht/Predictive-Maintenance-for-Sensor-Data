@@ -9,52 +9,80 @@ A short description of the project.
 ## Project Organization
 
 ```
-├── LICENSE            <- Open-source license if one is chosen
-├── Makefile           <- Makefile with convenience commands like `make data` or `make train`
-├── README.md          <- The top-level README for developers using this project.
-├── data
-│   ├── external       <- Data from third party sources.
-│   ├── interim        <- Intermediate data that has been transformed.
-│   ├── processed      <- The final, canonical data sets for modeling.
-│   └── raw            <- The original, immutable data dump.
+predictive-maintenance/
 │
-├── docs               <- A default mkdocs project; see www.mkdocs.org for details
+├── README.md
+├── LICENSE
+├── Makefile
+├── pyproject.toml
+├── .gitignore
+├── .env.example
 │
-├── models             <- Trained and serialized models, model predictions, or model summaries
+├── data/
+│   ├── raw/                  # Données originales, jamais modifiées
+│   ├── external/             # Données externes
+│   ├── interim/              # Données après transformations intermédiaires
+│   └── processed/            # Dataset final pour le ML
 │
-├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description, e.g.
-│                         `1.0-jqp-initial-data-exploration`.
+├── notebooks/
+│   ├── 01_eda.ipynb
+│   ├── 02_data_cleaning.ipynb
+│   ├── 03_feature_engineering.ipynb
+│   └── 04_model_evaluation.ipynb
 │
-├── pyproject.toml     <- Project configuration file with package metadata for 
-│                         predictive_maintenance_for_sensor_data and configuration for tools like black
+├── models/
+│   ├── baseline/
+│   ├── production/
+│   └── metadata/
 │
-├── references         <- Data dictionaries, manuals, and all other explanatory materials.
+├── reports/
+│   ├── figures/
+│   └── results/
 │
-├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-│   └── figures        <- Generated graphics and figures to be used in reporting
+├── docs/
 │
-├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
-│                         generated with `pip freeze > requirements.txt`
+├── references/
+│   └── data_dictionary.md
 │
-├── setup.cfg          <- Configuration file for flake8
+├── src/
+│   └── predictive_maintenance/
+│       ├── __init__.py
+│       │
+│       ├── config.py
+│       │
+│       ├── data/
+│       │   ├── __init__.py
+│       │   ├── ingestion.py
+│       │   ├── validation.py
+│       │   └── preprocessing.py
+│       │
+│       ├── features/
+│       │   ├── __init__.py
+│       │   └── engineering.py
+│       │
+│       ├── models/
+│       │   ├── __init__.py
+│       │   ├── train.py
+│       │   ├── predict.py
+│       │   └── evaluate.py
+│       │
+│       ├── visualization/
+│       │   ├── __init__.py
+│       │   └── plots.py
+│       │
+│       └── utils/
+│           ├── __init__.py
+│           └── helpers.py
 │
-└── predictive_maintenance_for_sensor_data   <- Source code for use in this project.
-    │
-    ├── __init__.py             <- Makes predictive_maintenance_for_sensor_data a Python module
-    │
-    ├── config.py               <- Store useful variables and configuration
-    │
-    ├── dataset.py              <- Scripts to download or generate data
-    │
-    ├── features.py             <- Code to create features for modeling
-    │
-    ├── modeling                
-    │   ├── __init__.py 
-    │   ├── predict.py          <- Code to run model inference with trained models          
-    │   └── train.py            <- Code to train models
-    │
-    └── plots.py                <- Code to create visualizations
+├── tests/
+│   ├── __init__.py
+│   ├── test_data.py
+│   ├── test_features.py
+│   └── test_models.py
+│
+└── configs/
+    ├── base.yaml
+    └── model.yaml
 ```
 
 --------

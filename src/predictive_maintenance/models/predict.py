@@ -4,7 +4,7 @@ from loguru import logger
 from tqdm import tqdm
 import typer
 
-from predictive_maintenance_for_sensor_data.config import MODELS_DIR, PROCESSED_DATA_DIR
+from src.predictive_maintenance.config import MODELS_DIR, PROCESSED_DATA_DIR
 
 app = typer.Typer()
 
