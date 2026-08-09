@@ -33,10 +33,7 @@ def load_data(path: Path) -> pd.DataFrame:
     logger.info(f"Loading dataset from {path}")
 
     df = pd.read_csv(
-        path,
-        sep=r"\s+",
-        header=None,
-        names=COLUMNS,
+        path
     )
 
     logger.success(
