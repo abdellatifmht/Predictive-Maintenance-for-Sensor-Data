@@ -1,6 +1,5 @@
 from pathlib import Path
 import pandas as pd
-from loguru import logger
 
 
 def save_dataframe(
@@ -25,10 +24,8 @@ def save_dataframe(
 
     if file_format == "csv":
         df.to_csv(file_path, index=index)
-        logger.info(f"DataFrame saved to {file_path} in CSV format.")
     elif file_format == "parquet":
         df.to_parquet(file_path, index=index)
-        logger.info(f"DataFrame saved to {file_path} in Parquet format.")
     else:
         raise ValueError(f"Unsupported file format: {file_format}. Use 'csv' or 'parquet'.")
 
@@ -52,7 +49,6 @@ def save_dataframe(
 #     """
 
 #     if not file_path.exists():
-#         logger.error(f"File not found: {file_path}")
 #         raise FileNotFoundError(f"File not found: {file_path}")
 
 #     if file_format == "csv":
