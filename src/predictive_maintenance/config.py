@@ -21,6 +21,13 @@ MODELS_DIR = PROJ_ROOT / "models"
 REPORTS_DIR = PROJ_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "figures"
 
+# Columns
+COLUMNS = (
+    ["unit", "cycle"]
+    + [f"os{i}" for i in range(1, 4)]
+    + [f"sensor_{i}" for i in range(1, 22)]
+)
+    
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
 try:

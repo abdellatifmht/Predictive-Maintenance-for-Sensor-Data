@@ -1179,7 +1179,7 @@ wheels = [
 ]
 
 [[package]]
-name = "predictive-maintenance-for-sensor-data"
+name = "predictive-maintenance"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
