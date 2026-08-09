@@ -134,6 +134,31 @@ def sort_by_unit_and_cycle(df: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values(by=['unit', 'cycle']).reset_index(drop=True)
 
 
+def create_rul(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create a Remaining Useful Life (RUL) column for each engine unit.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame containing engine data.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with an additional 'RUL' column.
+    """
+    logger.info("Creating Remaining Useful Life (RUL) column.")
+
+    # Calculate RUL for each unit
+    max_cycles = df.groupby('unit')['cycle'].transform('max')
+    df['RUL'] = max_cycles - df['cycle']
+
+    logger.success("RUL column created successfully.")
+
+    return df
+
+
 def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Preprocess the raw dataset by performing the following steps:
@@ -142,6 +167,7 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     3. Remove constant columns.
     4. Handle missing values.
     5. Sort by 'unit' and 'cycle'.
+    6. Create RUL column.
 
     Parameters
     ----------
@@ -158,6 +184,7 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     df = remove_constant_columns(df)
     df = handle_missing_values(df)
     df = sort_by_unit_and_cycle(df)
+    df = create_rul(df)
 
     logger.success(f"Data preprocessing completed: {df.shape[0]:,} rows × {df.shape[1]} columns")
 
