@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from pathlib import Path
 
 import pandas as pd
@@ -171,3 +172,6 @@ def main(
 
 if __name__ == "__main__":
     app()
+=======
+def 
+>>>>>>> 6b6f4126abbe7c97def6b5a89eb094e0a7f041ba
