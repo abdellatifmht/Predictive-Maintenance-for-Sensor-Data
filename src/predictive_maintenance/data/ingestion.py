@@ -1,11 +1,10 @@
-<<<<<<< HEAD
 from pathlib import Path
 
 import pandas as pd
 import typer
 from loguru import logger
 
-from predictive_maintenance.config import RAW_DATA_DIR, COLUMNS
+from predictive_maintenance.config import RAW_DATA_DIR, EXTERNAL_DATA_DIR, COLUMNS
 from predictive_maintenance.utils.helpers import (
     save_dataframe,
     validate_required_columns,
@@ -154,9 +153,9 @@ def ingest_dataset(
 
 @app.command()
 def main(
-    train_path: Path = RAW_DATA_DIR / "train_FD001.txt",
-    test_path: Path = RAW_DATA_DIR / "test_FD001.txt",
-    rul_path: Path = RAW_DATA_DIR / "RUL_FD001.txt",
+    train_path: Path = EXTERNAL_DATA_DIR / "train_FD001.txt",
+    test_path: Path = EXTERNAL_DATA_DIR / "test_FD001.txt",
+    rul_path: Path = EXTERNAL_DATA_DIR / "RUL_FD001.txt",
     output_dir: Path = RAW_DATA_DIR,
 ) -> None:
     """
@@ -172,6 +171,3 @@ def main(
 
 if __name__ == "__main__":
     app()
-=======
-def 
->>>>>>> 6b6f4126abbe7c97def6b5a89eb094e0a7f041ba
