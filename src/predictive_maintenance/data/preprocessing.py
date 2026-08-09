@@ -3,7 +3,7 @@ import pandas as pd
 from loguru import logger
 import typer
 
-from predictive_maintenance.config import RAW_DATA_DIR, INTERIM_DATA_DIR, COLUMNS
+from predictive_maintenance.config import RAW_DATA_DIR, INTERIM_DATA_DIR
 from predictive_maintenance.utils.helpers import (
     save_dataframe,
     validate_required_columns,

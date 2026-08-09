@@ -4,7 +4,7 @@ import pandas as pd
 import typer
 from loguru import logger
 
-from predictive_maintenance.config import RAW_DATA_DIR, EXTERNAL_DATA_DIR, COLUMNS
+from predictive_maintenance.config import RAW_DATA_DIR, EXTERNAL_DATA_DIR, RAW_COLUMNS
 from predictive_maintenance.utils.helpers import (
     save_dataframe,
     validate_required_columns,
@@ -41,7 +41,7 @@ def load_cmapss(path: Path) -> pd.DataFrame:
         path,
         sep=r"\s+",
         header=None,
-        names=COLUMNS,
+        names=RAW_COLUMNS,
     )
 
     logger.success(
@@ -110,8 +110,8 @@ def ingest_dataset(
     # Validate schemas
     logger.info("Validating dataset schemas...")
 
-    validate_required_columns(train_df, COLUMNS)
-    validate_required_columns(test_df, COLUMNS)
+    validate_required_columns(train_df, RAW_COLUMNS)
+    validate_required_columns(test_df, RAW_COLUMNS)
     validate_required_columns(rul_df, ["RUL"])
 
     # Save datasets

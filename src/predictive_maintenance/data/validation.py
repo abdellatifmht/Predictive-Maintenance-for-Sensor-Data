@@ -4,7 +4,7 @@ import pandas as pd
 import typer
 from loguru import logger
 
-from predictive_maintenance.config import INTERIM_DATA_DIR, COLUMNS
+from predictive_maintenance.config import INTERIM_DATA_DIR, REQUIRED_COLUMNS
 from predictive_maintenance.utils.helpers import load_dataframe
 
 app = typer.Typer()
@@ -14,7 +14,7 @@ def validate_schema(df: pd.DataFrame) -> None:
     """
     Validate the schema of the DataFrame against the expected columns.
     """
-    missing_columns = set(COLUMNS) - set(df.columns)
+    missing_columns = set(REQUIRED_COLUMNS) - set(df.columns)
 
     if missing_columns:
         logger.error(f"Missing columns in the DataFrame: {missing_columns}")

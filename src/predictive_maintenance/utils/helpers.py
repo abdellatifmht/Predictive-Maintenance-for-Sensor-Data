@@ -1,4 +1,5 @@
 from pathlib import Path
+from loguru import logger
 import pandas as pd
 
 
@@ -30,36 +31,36 @@ def save_dataframe(
         raise ValueError(f"Unsupported file format: {file_format}. Use 'csv' or 'parquet'.")
 
 
-# def load_dataframe(
-#     file_path: Path, 
-#     file_format: str = "csv"
-# ) -> pd.DataFrame:
-#     """
-#     Load a DataFrame from a specified file format.
+def load_dataframe(
+    file_path: Path, 
+    file_format: str = "csv"
+) -> pd.DataFrame:
+    """
+    Load a DataFrame from a specified file format.
 
-#     Parameters:
-#     file_path (Path): The path of the file to load.
-#     file_format (str): The format of the file to load ('csv' or 'parquet').
+    Parameters:
+    file_path (Path): The path of the file to load.
+    file_format (str): The format of the file to load ('csv' or 'parquet').
 
-#     Returns:
-#     pd.DataFrame: The loaded DataFrame.
+    Returns:
+    pd.DataFrame: The loaded DataFrame.
 
-#     Raises:
-#     ValueError: If an unsupported file format is provided.
-#     """
+    Raises:
+    ValueError: If an unsupported file format is provided.
+    """
 
-#     if not file_path.exists():
-#         raise FileNotFoundError(f"File not found: {file_path}")
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
 
-#     if file_format == "csv":
-#         return pd.read_csv(file_path)
-#     elif file_format == "parquet":
-#         return pd.read_parquet(file_path)
-#     else:
-#         raise ValueError(f"Unsupported file format: {file_format}. Use 'csv' or 'parquet'.")
+    if file_format == "csv":
+        return pd.read_csv(file_path)
+    elif file_format == "parquet":
+        return pd.read_parquet(file_path)
+    else:
+        raise ValueError(f"Unsupported file format: {file_format}. Use 'csv' or 'parquet'.")
 
 
-def validate_required_colums(
+def validate_required_columns(
         df: pd.DataFrame, 
         required_columns: list[str]
 ):
@@ -76,4 +77,7 @@ def validate_required_colums(
 
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
+        logger.error(f"Missing required columns: {', '.join(missing_columns)}")
         raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
+    logger.success("All required columns are present in the DataFrame.")
+
