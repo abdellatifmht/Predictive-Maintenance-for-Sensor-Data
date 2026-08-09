@@ -3,7 +3,7 @@ import pandas as pd
 from loguru import logger
 import typer
 
-from predictive_maintenance.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, COLUMNS
+from predictive_maintenance.config import RAW_DATA_DIR, INTERIM_DATA_DIR, COLUMNS
 from predictive_maintenance.utils.helpers import (
     save_dataframe,
     validate_required_columns,
@@ -98,4 +98,113 @@ def remove_constant_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
-    
+    """ Handle missing values using forward-fill followed by backward-fill. """
+
+    missing_values_count = df.isnull().sum().sum()
+    if missing_values_count == 0:
+        logger.info("No missing values found.")
+        return df
+
+    logger.info(f"Handling {missing_values_count} missing values using forward-fill and backward-fill.")
+
+    # Fill values within each engine independently
+    df = df.groupby('unit').apply(lambda group: group.ffill().bfill()).reset_index(drop=True)
+
+    missing_values_count_after = df.isnull().sum().sum()
+
+    logger.success(f"Missing values handled. Remaining missing values: {missing_values_count_after}")
+
+    return df
+
+
+def sort_by_unit_and_cycle(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sort the DataFrame by 'unit' and 'cycle' columns.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame to sort.
+
+    Returns
+    -------
+    pd.DataFrame
+        Sorted DataFrame.
+    """
+    return df.sort_values(by=['unit', 'cycle']).reset_index(drop=True)
+
+
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Preprocess the raw dataset by performing the following steps:
+    1. Validate required columns.
+    2. Remove empty columns.
+    3. Remove constant columns.
+    4. Handle missing values.
+    5. Sort by 'unit' and 'cycle'.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The raw dataset to preprocess.
+
+    Returns
+    -------
+    pd.DataFrame
+        The preprocessed dataset.
+    """
+    validate_required_columns(df, COLUMNS)
+    df = remove_empty_columns(df)
+    df = remove_constant_columns(df)
+    df = handle_missing_values(df)
+    df = sort_by_unit_and_cycle(df)
+
+    logger.success(f"Data preprocessing completed: {df.shape[0]:,} rows × {df.shape[1]} columns")
+
+    return df
+
+
+def preprocess_dataset(input_path: Path, output_path: Path) -> None:
+    """
+    Execute the data preprocessing pipeline.
+
+    Parameters
+    ----------
+    input_path : Path
+        Path to the raw dataset file.
+    output_path : Path
+        Path to save the preprocessed dataset.
+    """
+    logger.info(f"Starting preprocessing for dataset: {input_path}")
+
+    df = load_data(input_path)
+    df_preprocessed = preprocess_data(df)
+
+    save_dataframe(df_preprocessed, output_path, file_format="csv", index=False)
+
+    logger.success(f"Preprocessed dataset saved to: {output_path}")
+
+
+@app.command()
+def main(
+    input_file: Path = RAW_DATA_DIR / "train_data.csv",
+    output_file: Path = INTERIM_DATA_DIR / "train_preprocessed.csv",
+) -> None:
+    """
+    Preprocess the raw dataset and save the preprocessed dataset.
+
+    Parameters
+    ----------
+    input_file : Path
+        Path to the raw dataset file.
+    output_file : Path
+        Path to save the preprocessed dataset.
+    """
+    if not input_file.exists():
+        logger.error(f"Input file does not exist: {input_file}")
+        raise FileNotFoundError(f"Input file does not exist: {input_file}")
+    preprocess_dataset(input_file, output_file)
+
+
+if __name__ == "__main__":
+    app()
