@@ -1,12 +1,23 @@
 from pathlib import Path
 
-from loguru import logger
-from tqdm import tqdm
+import joblib
+import pandas as pd
 import typer
+from loguru import logger
+from sklearn.model_selection import GroupShuffleSplit
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from xgboost import XGBRegressor
 
-from src.predictive_maintenance.config import MODELS_DIR, PROCESSED_DATA_DIR
+from predictive_maintenance.config import (
+    MODELS_DIR,
+    PROCESSED_DATA_DIR,
+    RESULTS_DIR,
+)
+from predictive_maintenance.utils.helpers import load_dataframe
+
 
 app = typer.Typer()
+
 
 
 @app.command()
