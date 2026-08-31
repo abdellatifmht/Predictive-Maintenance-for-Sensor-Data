@@ -1,15 +1,12 @@
 from pathlib import Path
+import json
 import pandas as pd
 from loguru import logger
-import typer
-
-from predictive_maintenance.config import RAW_DATA_DIR, INTERIM_DATA_DIR
+from predictive_maintenance.config import RAW_COLUMNS
 from predictive_maintenance.utils.helpers import (
     save_dataframe,
     validate_required_columns,
 )
-
-app = typer.Typer()
 
 
 def load_data(path: Path) -> pd.DataFrame:
@@ -70,26 +67,41 @@ def remove_empty_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df_cleaned
 
 
-def remove_constant_columns(df: pd.DataFrame) -> pd.DataFrame:
+def get_constant_columns(df: pd.DataFrame) -> list[str]:
     """
-    Remove columns with zero variance (constant columns) from the DataFrame.
+    Identify columns with zero variance (constant columns).
+    """
+    return [col for col in df.columns if df[col].nunique(dropna=False) <= 1]
+
+
+def remove_constant_columns(
+    df: pd.DataFrame,
+    constant_columns: list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Remove constant columns from the DataFrame.
 
     Parameters
     ----------
     df : pd.DataFrame
         The DataFrame to process.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with constant columns removed.
+    constant_columns : list[str] | None
+        Columns to drop. If None, they are computed from `df` itself (original
+        behaviour — use this ONLY for the train set). If provided, those exact
+        columns are dropped (ignoring any that are missing) — use this for the
+        test set, passing the list computed on train, so both datasets end up
+        with an identical, consistent feature schema.
     """
-    constant_columns = [
-        col for col in df.columns if df[col].nunique(dropna=False) <= 1
-    ]
-    if constant_columns:
-        df = df.drop(columns=constant_columns)
-        logger.info(f"Removed {len(constant_columns)} constant columns: {constant_columns}")
+    if constant_columns is None:
+        constant_columns = get_constant_columns(df)
+
+    columns_to_drop = [col for col in constant_columns if col in df.columns]
+
+    if columns_to_drop:
+        df = df.drop(columns=columns_to_drop)
+        logger.info(f"Removed {len(columns_to_drop)} constant columns: {columns_to_drop}")
+    else:
+        logger.info("No constant columns to remove.")
 
     return df
 
@@ -131,14 +143,27 @@ def sort_by_unit_and_cycle(df: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values(by=['unit', 'cycle']).reset_index(drop=True)
 
 
-def create_rul(df: pd.DataFrame) -> pd.DataFrame:
+def create_rul(df: pd.DataFrame, cap: int | None = 125) -> pd.DataFrame:
     """
     Create a Remaining Useful Life (RUL) column for each engine unit.
+
+    ONLY valid for a TRAIN-style dataset where each unit's trajectory runs
+    all the way to failure (its last recorded cycle IS the failure). For a
+    TEST-style dataset with truncated trajectories, use
+    `add_rul_from_ground_truth` instead — applying this function to test data
+    would silently assign RUL=0 to every unit's last cycle, which is wrong.
 
     Parameters
     ----------
     df : pd.DataFrame
-        The DataFrame containing engine data.
+        The DataFrame containing engine data (must run to failure).
+    cap : int | None
+        Piecewise-linear RUL cap. In early life, an engine shows almost no
+        sign of degradation, so distinguishing "500 cycles left" from
+        "300 cycles left" adds noise rather than signal — the standard
+        practice on C-MAPSS (Heimes, 2008) is to cap RUL at a fixed ceiling
+        (125 cycles is the commonly used value in the literature). Pass
+        `cap=None` to disable and keep the raw linear RUL.
 
     Returns
     -------
@@ -151,12 +176,82 @@ def create_rul(df: pd.DataFrame) -> pd.DataFrame:
     max_cycles = df.groupby('unit')['cycle'].transform('max')
     df['RUL'] = max_cycles - df['cycle']
 
+    if cap is not None:
+        n_capped = (df['RUL'] > cap).sum()
+        df['RUL'] = df['RUL'].clip(upper=cap)
+        logger.info(f"RUL capped at {cap} cycles ({n_capped:,} rows affected).")
+
     logger.success("RUL column created successfully.")
 
     return df
 
 
-def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+def add_rul_from_ground_truth(
+    df: pd.DataFrame,
+    rul_df: pd.DataFrame,
+    cap: int | None = 125,
+) -> pd.DataFrame:
+    """
+    Create a per-cycle RUL column for a TRUNCATED (test-style) dataset, using
+    ground-truth RUL values known only at each unit's LAST recorded cycle.
+
+    Each test trajectory stops before failure. `rul_df` (e.g. RUL_FD001.txt)
+    gives the true remaining life at that last recorded cycle. We extend that
+    known value backwards through the trajectory:
+
+        RUL(cycle) = RUL_true_at_last_cycle + (max_cycle_in_trajectory - cycle)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Test-style DataFrame (truncated trajectories), must contain 'unit' and 'cycle'.
+    rul_df : pd.DataFrame
+        DataFrame with one row per unit, in unit order, containing a 'RUL' column
+        (this matches the raw format of RUL_FD001.txt loaded via `load_rul_data`).
+    cap : int | None
+        Same piecewise-linear cap as `create_rul` — MUST be the same value used
+        for the training set, otherwise train and test targets follow different
+        scales.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with an additional 'RUL' column.
+    """
+    logger.info("Creating Remaining Useful Life (RUL) column from ground truth (test set).")
+
+    rul_lookup = rul_df.reset_index(drop=True).copy()
+    rul_lookup["unit"] = rul_lookup.index + 1  # RUL_FD001.txt is ordered by unit_number, 1-indexed
+    rul_lookup = rul_lookup.rename(columns={"RUL": "_rul_at_last_cycle"})
+
+    max_cycle = df.groupby("unit")["cycle"].transform("max")
+
+    df = df.merge(rul_lookup[["unit", "_rul_at_last_cycle"]], on="unit", how="left")
+
+    if df["_rul_at_last_cycle"].isna().any():
+        missing_units = df.loc[df["_rul_at_last_cycle"].isna(), "unit"].unique().tolist()
+        raise ValueError(f"No ground-truth RUL found for units: {missing_units}")
+
+    df["RUL"] = df["_rul_at_last_cycle"] + (max_cycle - df["cycle"])
+    df = df.drop(columns=["_rul_at_last_cycle"])
+
+    if cap is not None:
+        n_capped = (df["RUL"] > cap).sum()
+        df["RUL"] = df["RUL"].clip(upper=cap)
+        logger.info(f"RUL capped at {cap} cycles ({n_capped:,} rows affected).")
+
+    logger.success("RUL column (ground truth) created successfully.")
+
+    return df
+
+
+def preprocess_data(
+    df: pd.DataFrame,
+    is_train: bool,
+    constant_columns: list[str] | None = None,
+    rul_df: pd.DataFrame | None = None,
+    rul_cap: int | None = 125,
+) -> tuple[pd.DataFrame, list[str]]:
     """
     Preprocess the raw dataset by performing the following steps:
     1. Validate required columns.
@@ -164,31 +259,63 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     3. Remove constant columns.
     4. Handle missing values.
     5. Sort by 'unit' and 'cycle'.
-    6. Create RUL column.
+    6. Create RUL column (from trajectory end for train, from ground truth for test).
 
     Parameters
     ----------
     df : pd.DataFrame
         The raw dataset to preprocess.
+    is_train : bool
+        True for a train-style dataset (trajectories run to failure) — RUL is
+        computed directly. False for a test-style (truncated) dataset — RUL is
+        reconstructed from `rul_df` (required in that case).
+    constant_columns : list[str] | None
+        Explicit list of constant columns to drop. Pass None for train (they
+        will be detected from the train data itself and returned so the SAME
+        list can be reused for the test set — see `get_constant_columns`).
+    rul_df : pd.DataFrame | None
+        Ground-truth RUL data (e.g. rul_data.csv), REQUIRED when is_train=False.
+    rul_cap : int | None
+        Piecewise-linear RUL cap, forwarded to `create_rul` /
+        `add_rul_from_ground_truth`. Must be identical for train and test.
 
     Returns
     -------
-    pd.DataFrame
-        The preprocessed dataset.
+    tuple[pd.DataFrame, list[str]]
+        The preprocessed dataset, and the list of constant columns that were
+        removed (pass this back in for the test set so schemas match).
     """
-    validate_required_columns(df, COLUMNS)
+    if not is_train and rul_df is None:
+        raise ValueError("rul_df is required when is_train=False (test-style dataset).")
+
+    validate_required_columns(df, RAW_COLUMNS)
     df = remove_empty_columns(df)
-    df = remove_constant_columns(df)
+
+    if constant_columns is None:
+        constant_columns = get_constant_columns(df)
+    df = remove_constant_columns(df, constant_columns=constant_columns)
+
     df = handle_missing_values(df)
     df = sort_by_unit_and_cycle(df)
-    df = create_rul(df)
+
+    if is_train:
+        df = create_rul(df, cap=rul_cap)
+    else:
+        df = add_rul_from_ground_truth(df, rul_df, cap=rul_cap)
 
     logger.success(f"Data preprocessing completed: {df.shape[0]:,} rows × {df.shape[1]} columns")
 
-    return df
+    return df, constant_columns
 
 
-def preprocess_dataset(input_path: Path, output_path: Path) -> None:
+def preprocess_dataset(
+    input_path: Path,
+    output_path: Path,
+    is_train: bool,
+    constant_columns_path: Path,
+    rul_path: Path | None = None,
+    rul_cap: int | None = 125,
+) -> None:
     """
     Execute the data preprocessing pipeline.
 
@@ -198,37 +325,46 @@ def preprocess_dataset(input_path: Path, output_path: Path) -> None:
         Path to the raw dataset file.
     output_path : Path
         Path to save the preprocessed dataset.
+    is_train : bool
+        Whether `input_path` is the train (trajectories run to failure) or
+        test (truncated) dataset.
+    constant_columns_path : Path
+        Where the list of constant columns is saved (train) or loaded from
+        (test) — a small JSON file, so the test set drops EXACTLY the same
+        columns as the train set, even if run as a separate CLI invocation.
+    rul_path : Path | None
+        Path to the ground-truth RUL file — REQUIRED when is_train=False.
+    rul_cap : int | None
+        Piecewise-linear RUL cap (see `create_rul`).
     """
     logger.info(f"Starting preprocessing for dataset: {input_path}")
 
     df = load_data(input_path)
-    df_preprocessed = preprocess_data(df)
+
+    if is_train:
+        constant_columns = None  # detected from this (train) data
+        rul_df = None
+    else:
+        if rul_path is None:
+            raise ValueError("--rul-path is required when preprocessing the test set.")
+        if not constant_columns_path.exists():
+            raise FileNotFoundError(
+                f"{constant_columns_path} not found — preprocess the TRAIN set first, "
+                "it saves this file for the test set to reuse."
+            )
+        with open(constant_columns_path) as f:
+            constant_columns = json.load(f)
+        rul_df = load_data(rul_path) if rul_path.suffix == ".csv" else pd.read_csv(rul_path, sep=r"\s+", header=None, names=["RUL"])
+
+    df_preprocessed, constant_columns = preprocess_data(
+        df, is_train=is_train, constant_columns=constant_columns, rul_df=rul_df, rul_cap=rul_cap,
+    )
 
     save_dataframe(df_preprocessed, output_path, file_format="csv", index=False)
-
     logger.success(f"Preprocessed dataset saved to: {output_path}")
 
-
-@app.command()
-def main(
-    input_file: Path = RAW_DATA_DIR / "train_data.csv",
-    output_file: Path = INTERIM_DATA_DIR / "train_preprocessed.csv",
-) -> None:
-    """
-    Preprocess the raw dataset and save the preprocessed dataset.
-
-    Parameters
-    ----------
-    input_file : Path
-        Path to the raw dataset file.
-    output_file : Path
-        Path to save the preprocessed dataset.
-    """
-    if not input_file.exists():
-        logger.error(f"Input file does not exist: {input_file}")
-        raise FileNotFoundError(f"Input file does not exist: {input_file}")
-    preprocess_dataset(input_file, output_file)
-
-
-if __name__ == "__main__":
-    app()
+    if is_train:
+        constant_columns_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(constant_columns_path, "w") as f:
+            json.dump(constant_columns, f)
+        logger.success(f"Constant columns saved to: {constant_columns_path}")
