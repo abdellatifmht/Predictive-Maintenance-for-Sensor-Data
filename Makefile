@@ -1,87 +1,53 @@
-#################################################################################
-# GLOBALS                                                                       #
-#################################################################################
+.PHONY: install data train predict evaluate api monitoring-reference monitoring-stream monitoring-dashboard docker-build docker-run test clean
 
-PROJECT_NAME = Predictive-Maintenance-for-Sensor-Data
-PYTHON_VERSION = 3.10
-PYTHON_INTERPRETER = python
+PYTHON := python3
 
-#################################################################################
-# COMMANDS                                                                      #
-#################################################################################
+install:
+	pip install -r requirements.txt
 
+# ------------------------------------------------------------------
+# Semaine 5 — pipeline complet, reproductible en une commande.
+# ------------------------------------------------------------------
+train:
+	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.pipeline
 
-## Install Python dependencies
-.PHONY: requirements
-requirements:
-	uv sync
-	
+train-fast:
+	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.pipeline --no-train-lstm
 
+predict:
+	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.models.predict
 
+evaluate:
+	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.models.evaluate
 
-## Delete all compiled Python files
-.PHONY: clean
-clean:
-	find . -type f -name "*.py[co]" -delete
-	find . -type d -name "__pycache__" -delete
+# ------------------------------------------------------------------
+# Semaine 6 — serving
+# ------------------------------------------------------------------
+api:
+	PYTHONPATH=src uvicorn predictive_maintenance.api.main:app --reload --port 8000
 
+docker-build:
+	docker build -t predictive-maintenance-api .
 
-## Lint using ruff (use `make format` to do formatting)
-.PHONY: lint
-lint:
-	ruff format --check
-	ruff check
+docker-run: docker-build
+	docker run --rm -p 8000:8000 -v $(PWD)/models:/app/models:ro predictive-maintenance-api
 
-## Format source code with ruff
-.PHONY: format
-format:
-	ruff check --fix
-	ruff format
+# ------------------------------------------------------------------
+# Semaine 7 — monitoring
+# ------------------------------------------------------------------
+monitoring-reference:
+	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.monitoring.build_reference
 
+monitoring-stream:
+	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.monitoring.simulate_stream
 
+monitoring-dashboard:
+	PYTHONPATH=src streamlit run src/predictive_maintenance/monitoring/dashboard.py
 
-## Run tests
-.PHONY: test
+# ------------------------------------------------------------------
 test:
-	python -m pytest tests
+	PYTHONPATH=src pytest tests/ -v
 
-
-## Set up Python interpreter environment
-.PHONY: create_environment
-create_environment:
-	uv venv --python $(PYTHON_VERSION)
-	@echo ">>> New uv virtual environment created. Activate with:"
-	@echo ">>> Windows: .\\\\.venv\\\\Scripts\\\\activate"
-	@echo ">>> Unix/macOS: source ./.venv/bin/activate"
-	
-
-
-
-#################################################################################
-# PROJECT RULES                                                                 #
-#################################################################################
-
-
-## Make dataset
-.PHONY: data
-data: requirements
-	$(PYTHON_INTERPRETER) predictive_maintenance_for_sensor_data/dataset.py
-
-
-#################################################################################
-# Self Documenting Commands                                                     #
-#################################################################################
-
-.DEFAULT_GOAL := help
-
-define PRINT_HELP_PYSCRIPT
-import re, sys; \
-lines = '\n'.join([line for line in sys.stdin]); \
-matches = re.findall(r'\n## (.*)\n[\s\S]+?\n([a-zA-Z_-]+):', lines); \
-print('Available rules:\n'); \
-print('\n'.join(['{:25}{}'.format(*reversed(match)) for match in matches]))
-endef
-export PRINT_HELP_PYSCRIPT
-
-help:
-	@$(PYTHON_INTERPRETER) -c "${PRINT_HELP_PYSCRIPT}" < $(MAKEFILE_LIST)
+clean:
+	rm -rf data/raw data/interim data/processed models results
+	find . -type d -name "__pycache__" -exec rm -rf {} +
