@@ -1,86 +1,70 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-
-from sklearn.preprocessing import standardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
-from src.predictive_maintenance.models import BaseModel
 
-
-class LSTMNetwork(nn.Module):
-    """
-    LSTM network for predictive maintenance.
+class _LSTMNetwork(nn.Module):
+    """Réseau LSTM sous-jacent : quelques couches récurrentes + une petite
+    tête feed-forward qui projette le dernier état caché sur un scalaire (RUL).
     """
 
-    def __init__(
-            self,
-            input_size: int,
-            hidden_size: int = 64,
-            num_layers: int = 2,
-            dropout: float = 0.2,
-    ):
+    def __init__(self, n_features: int, hidden_size: int, num_layers: int, dropout: float):
         super().__init__()
 
         self.lstm = nn.LSTM(
-            input_size=input_size,
+            input_size=n_features,
             hidden_size=hidden_size,
             num_layers=num_layers,
-            dropout=dropout,
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
         )
 
-        self.fc = nn.Sequential(
+        self.head = nn.Sequential(
             nn.Linear(hidden_size, 32),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(32, 1),
         )
 
-    def forward(self, x) -> torch.Tensor:
-        """
-        Forward pass of the LSTM network.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, sequence_length, input_size).
-
-        Returns:
-            torch.Tensor: Output tensor of shape (batch_size, 1).
-        """
-
-        output, _ = self.lstm(x)
-        # take the output of the last time step
-        last_output = output[:, -1, :]
-
-        return self.fc(last_output).squeeze(1)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        _, (h_n, _) = self.lstm(x)
+        return self.head(h_n[-1]).squeeze(-1)
 
 
-class LSTMModel(BaseModel):
+class LSTMModel:
+    """Modèle de prédiction de RUL basé sur un LSTM.
+
+    Contrairement aux modèles classiques (LinearRegression, XGBoost, LightGBM),
+    ce modèle a besoin de voir plusieurs cycles consécutifs d'un même moteur
+    pour faire une prédiction, pas une seule ligne. `X` doit donc TOUJOURS
+    contenir les colonnes 'unit' et 'cycle' en plus des features, à la fois
+    pour `fit` et pour `predict` — ne pas appeler `prepare_data()` (qui les
+    supprime) avant de passer les données à ce modèle.
+
+    Interface volontairement alignée sur les autres modèles du projet
+    (`.name`, `.fit`, `.predict`, `.save`, `.load`) pour s'intégrer au reste
+    du pipeline avec un minimum de code spécifique.
     """
-    LSTM model for predictive maintenance.
 
-    Input shape: (batch_size, sequence_length, n_)
-    """
+    name = "LSTM"
 
     def __init__(
-            self,
-            sequence_length: int = 30,
-            hidden_size: int = 64,
-            num_layers: int = 2,
-            dropout: float = 0.2,
-            learning_rate: float = 0.001,
-            epochs: int = 50,
-            batch_size: int = 64,
-            random_state: int = 42,
-            device: str | None = None,
+        self,
+        sequence_length: int = 30,
+        hidden_size: int = 64,
+        num_layers: int = 1,
+        dropout: float = 0.2,
+        learning_rate: float = 1e-3,
+        epochs: int = 20,
+        batch_size: int = 64,
+        random_state: int = 42,
     ):
-        self.name = "lstm"
-
         self.sequence_length = sequence_length
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -90,231 +74,223 @@ class LSTMModel(BaseModel):
         self.batch_size = batch_size
         self.random_state = random_state
 
-        self.device = torch.device(
-            device if device is not None
-            else (
-                "cuda" if torch.cuda.is_available()
-                else
-                "cpu")
-            )
-
-        self.scaler = standardScaler()
-        self.model = None
-        self.features_columns = None
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model: _LSTMNetwork | None = None
+        self.feature_columns: list[str] | None = None
+        self.feature_mean: pd.Series | None = None
+        self.feature_std: pd.Series | None = None
 
         torch.manual_seed(random_state)
 
-    def create_sequences(
-            self,
-            df: pd.DataFrame,
-            y: pd.Series,
-            features_columns: list[str]
-    ) -> tuple[np.ndarray, np.ndarray]:
+    # ------------------------------------------------------------------
+    # Scaling (fit sur le train uniquement, jamais recalculé au predict)
+    # ------------------------------------------------------------------
+
+    def _scale(self, X: pd.DataFrame) -> np.ndarray:
+        return ((X[self.feature_columns] - self.feature_mean) / self.feature_std).to_numpy(dtype=np.float32)
+
+    # ------------------------------------------------------------------
+    # Construction des séquences
+    # ------------------------------------------------------------------
+
+    def _build_training_sequences(self, X: pd.DataFrame, y: pd.Series) -> tuple[np.ndarray, np.ndarray]:
+        """Une séquence par cycle de chaque moteur (fenêtre glissante causale,
+        rembourrée par répétition de la première ligne si le moteur n'a pas
+        encore `sequence_length` cycles d'historique).
         """
-        Create sequences of data for LSTM model.
+        sequences, targets = [], []
 
-        Args:
-            df (pd.DataFrame): Input dataframe.
-            y (pd.Series): Target variable.
-            features_columns (list[str]): List of feature columns.
+        df = X.copy()
+        df["_target"] = y.values
+
+        for _, unit_df in df.sort_values("cycle").groupby("unit"):
+            values = self._scale(unit_df)
+            unit_targets = unit_df["_target"].to_numpy()
+
+            for i in range(len(unit_df)):
+                start = max(0, i - self.sequence_length + 1)
+                window = values[start : i + 1]
+
+                if len(window) < self.sequence_length:
+                    pad = np.repeat(window[:1], self.sequence_length - len(window), axis=0)
+                    window = np.concatenate([pad, window], axis=0)
+
+                sequences.append(window)
+                targets.append(unit_targets[i])
+
+        return np.stack(sequences), np.array(targets, dtype=np.float32)
+
+    def _build_inference_sequences(self, X: pd.DataFrame) -> tuple[np.ndarray, list]:
+        """Une seule séquence par moteur : les `sequence_length` derniers
+        cycles disponibles (avec le même remplissage que pour l'entraînement
+        si le moteur en a moins).
         """
-        X_sequences = []
-        y_sequences = []
+        sequences, units = [], []
 
-        for unit, group in df.groupby("unit"):
-            group = group.sort_values("cycle")
+        for unit, unit_df in X.sort_values("cycle").groupby("unit"):
+            values = self._scale(unit_df)
+            window = values[-self.sequence_length :]
 
-            features = group[features_columns].to_numpy(dtype=np.float32)
+            if len(window) < self.sequence_length:
+                pad = np.repeat(window[:1], self.sequence_length - len(window), axis=0)
+                window = np.concatenate([pad, window], axis=0)
 
-            targets = y.loc[group.index].to_numpy(dtype=np.float32)
+            sequences.append(window)
+            units.append(unit)
 
-            if len(group) < self.sequence_length:
-                continue
+        return np.stack(sequences), units
 
-            for end in range(self.sequence_length, len(group) + 1):
-                start = end - self.sequence_length
+    # ------------------------------------------------------------------
+    # Entraînement
+    # ------------------------------------------------------------------
 
-                sequence = features[start:end]
+    def fit(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        X_val: pd.DataFrame | None = None,
+        y_val: pd.Series | None = None,
+    ) -> "LSTMModel":
+        self.feature_columns = [c for c in X.columns if c not in ("unit", "cycle")]
+        self.feature_mean = X[self.feature_columns].mean()
+        self.feature_std = X[self.feature_columns].std().replace(0, 1.0)
 
-                target = targets[end - 1]
-                X_sequences.append(sequence)
-                y_sequences.append(target)
+        X_seq, y_seq = self._build_training_sequences(X, y)
 
-        if not X_sequences:
-            raise ValueError(
-                "No sequences were created. "
-                "Please check the input data and sequence length."
-            )
+        loader = DataLoader(
+            TensorDataset(torch.from_numpy(X_seq), torch.from_numpy(y_seq)),
+            batch_size=self.batch_size,
+            shuffle=True,
+        )
 
-        return np.array(X_sequences), np.array(y_sequences)
-
-    def _fit_scaler(
-            self,
-            X: np.ndarray,
-    ) -> np.ndarray:
-        """
-        Fit the scaler on the training data.
-
-        Args:
-            X (np.ndarray): Input data of shape (num_samples, sequence_length, num_features).
-
-        Returns:
-            np.ndarray: Scaled input data.
-        """
-        n_samples, sequence_length, n_features = X.shape
-        X_2d = X.reshape(-1, n_features)
-        X_scaled = self.scaler.fit_transform(X_2d)
-        return X_scaled.reshape(n_samples, sequence_length, n_features)
-
-    def _transform(
-            self,
-            X: np.ndarray,
-    ) -> np.ndarray:
-        """
-        Transform the data using the fitted scaler.
-
-        Args:
-            X (np.ndarray): Input data of shape (num_samples, sequence_length, num_features).
-
-        Returns:
-            np.ndarray: Scaled input data.
-        """
-        n_samples, sequence_length, n_features = X.shape
-        X_2d = X.reshape(-1, n_features)
-        X_scaled = self.scaler.transform(X_2d)
-        return X_scaled.reshape(n_samples, sequence_length, n_features)
-
-    def _build_model(
-            self,
-            n_features: int,
-    ) -> None:
-        """
-        Build the LSTM model.
-
-        Args:
-            n_features (int): Number of features in the input data.
-        """
-        self.model = LSTMNetwork(
-            input_size=n_features,
+        self.model = _LSTMNetwork(
+            n_features=len(self.feature_columns),
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             dropout=self.dropout,
         ).to(self.device)
 
-    def fit(
-            self,
-            X: pd.DataFrame,
-            y: pd.Series,
-            X_val: pd.DataFrame | None = None,
-            y_val: pd.Series | None = None,
-    ) -> None:
-        """
-        Train the LSTM model.
-
-        Parameters:
-            X (pd.DataFrame): Training features.
-            y (pd.Series): Training target variable.
-            X_val (pd.DataFrame, optional): Validation features. Defaults to None.
-            y_val (pd.Series, optional): Validation target variable. Defaults to None.
-        """
-
-        self.features_columns = [
-            col for col in X.columns if col not in ["unit", "cycle"]
-        ]
-
-        if not self.features_columns:
-            raise ValueError(
-                "No feature columns found. "
-                "Please ensure that the input DataFrame contains feature columns."
-            )
-
-        X_train_seq, y_train_seq = self.create_sequences(
-            X, y, self.features_columns
-        )
-
-        X_train_seq = self._fit_scaler(X_train_seq)
-
-        X_val_seq, y_val_seq = None, None
-        if X_val is not None and y_val is not None:
-            X_val_seq, y_val_seq = self.create_sequences(
-                X_val, y_val, self.features_columns
-            )
-            X_val_seq = self._transform(X_val_seq)
-
-        self._build_model(n_features=len(self.features_columns))
-
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
         criterion = nn.MSELoss()
 
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        has_val = X_val is not None and y_val is not None
+        if has_val:
+            X_val_seq, y_val_seq = self._build_training_sequences(X_val, y_val)
 
-        X_tensor = torch.tensor(X_train_seq, dtype=torch.float32)
-        y_tensor = torch.tensor(y_train_seq, dtype=torch.float32)
-
-        dataset = TensorDataset(X_tensor, y_tensor)
-
-        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        best_val_loss = float("inf")
+        best_state = None
 
         for epoch in range(self.epochs):
             self.model.train()
-            total_loss = 0.0
+            train_loss = 0.0
 
             for X_batch, y_batch in loader:
                 X_batch, y_batch = X_batch.to(self.device), y_batch.to(self.device)
 
                 optimizer.zero_grad()
-
-                predections = self.model(X_batch)
-
-                loss = criterion(predections, y_batch)
-
+                pred = self.model(X_batch)
+                loss = criterion(pred, y_batch)
                 loss.backward()
-
                 optimizer.step()
 
-                total_loss += loss.item() * X_batch.size(0)
+                train_loss += loss.item() * X_batch.size(0)
 
-                train_loss = total_loss / len(dataset)
+            train_loss /= len(loader.dataset)
 
-                if X_val_seq is not None and y_val_seq is not None:
-                    val_loss = self.evaluate(X_val_seq, y_val_seq, criterion)
-                    print(
-                        f"Epoch "
-                        f"{epoch + 1:03d}/{self.epochs} "
-                        f"- Train Loss: {train_loss:.4f} "
-                        f"- Val Loss: {val_loss:.4f}"
-                    )
+            if has_val:
+                val_loss = self._evaluate_loss(X_val_seq, y_val_seq, criterion)
 
-                else:
-                    print(
-                        f"Epoch "
-                        f"{epoch + 1:03d}/{self.epochs} "
-                        f"- Train Loss: {train_loss:.4f}"
-                    )
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_state = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}
 
-        def _evaluate_loss(
-                self,
-                X: np.ndarray,
-                y: np.ndarray,
-                criterion: nn.Module = nn.Module,
-        ) -> float:
-            """
-            Calculate validation loss for the model.
-            """
+                print(f"Epoch {epoch + 1:03d}/{self.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
+            else:
+                print(f"Epoch {epoch + 1:03d}/{self.epochs} - Train Loss: {train_loss:.4f}")
 
-            self.model.eval()
+        # Restaure les poids du meilleur epoch (val loss la plus basse) plutôt
+        # que de garder ceux du dernier epoch, potentiellement sur-appris.
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
+            print(f"Restored best epoch (val loss: {best_val_loss:.4f}).")
 
-            X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
-            y_tensor = torch.tensor(y, dtype=torch.float32).to(self.device)
+        return self
 
-            with torch.no_grad():
-                predictions = self.model(X_tensor)
-                loss = criterion(predictions, y_tensor)
+    def _evaluate_loss(self, X_seq: np.ndarray, y_seq: np.ndarray, criterion: nn.Module) -> float:
+        self.model.eval()
 
-            return loss.item()
+        with torch.no_grad():
+            X_tensor = torch.from_numpy(X_seq).to(self.device)
+            y_tensor = torch.from_numpy(y_seq).to(self.device)
+            loss = criterion(self.model(X_tensor), y_tensor)
 
-        # def predict(
-        #         self,
-        #         x: pd.DataFrame,
-        # ) -> np.ndarray:
-        #     """
-        #     Predict RUL using the """
+        return loss.item()
+
+    # ------------------------------------------------------------------
+    # Prédiction
+    # ------------------------------------------------------------------
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Renvoie une prédiction par moteur présent dans `X`, dans l'ordre
+        croissant des identifiants de moteur (comportement de `groupby`).
+        """
+        if self.model is None:
+            raise RuntimeError("Le modèle n'est pas entraîné — appeler fit() d'abord.")
+
+        X_seq, _ = self._build_inference_sequences(X)
+
+        self.model.eval()
+        with torch.no_grad():
+            X_tensor = torch.from_numpy(X_seq).to(self.device)
+            predictions = self.model(X_tensor).cpu().numpy()
+
+        return predictions
+
+    # ------------------------------------------------------------------
+    # Sauvegarde / chargement
+    # ------------------------------------------------------------------
+
+    def save(self, path: Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        torch.save(
+            {
+                "model_state": self.model.state_dict(),
+                "feature_columns": self.feature_columns,
+                "feature_mean": self.feature_mean,
+                "feature_std": self.feature_std,
+                "config": {
+                    "sequence_length": self.sequence_length,
+                    "hidden_size": self.hidden_size,
+                    "num_layers": self.num_layers,
+                    "dropout": self.dropout,
+                    "learning_rate": self.learning_rate,
+                    "epochs": self.epochs,
+                    "batch_size": self.batch_size,
+                    "random_state": self.random_state,
+                },
+            },
+            path.with_suffix(".pt"),
+        )
+
+    @classmethod
+    def load(cls, path: Path) -> "LSTMModel":
+        path = Path(path).with_suffix(".pt")
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+
+        instance = cls(**checkpoint["config"])
+        instance.feature_columns = checkpoint["feature_columns"]
+        instance.feature_mean = checkpoint["feature_mean"]
+        instance.feature_std = checkpoint["feature_std"]
+
+        instance.model = _LSTMNetwork(
+            n_features=len(instance.feature_columns),
+            hidden_size=instance.hidden_size,
+            num_layers=instance.num_layers,
+            dropout=instance.dropout,
+        ).to(instance.device)
+        instance.model.load_state_dict(checkpoint["model_state"])
+        instance.model.eval()
+
+        return instance
