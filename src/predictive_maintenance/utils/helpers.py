@@ -80,4 +80,3 @@ def validate_required_columns(
         logger.error(f"Missing required columns: {', '.join(missing_columns)}")
         raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
     logger.success("All required columns are present in the DataFrame.")
-
