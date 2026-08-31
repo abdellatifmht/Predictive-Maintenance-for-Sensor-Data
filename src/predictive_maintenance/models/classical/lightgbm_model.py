@@ -1,7 +1,7 @@
 import pandas as pd
 from lightgbm import LGBMRegressor
 
-from .base import BaseModel
+from predictive_maintenance.models import BaseModel
 
 
 class LightGBMModel(BaseModel):
