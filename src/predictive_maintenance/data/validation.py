@@ -1,13 +1,7 @@
-from pathlib import Path
-
 import pandas as pd
-import typer
 from loguru import logger
 
-from predictive_maintenance.config import INTERIM_DATA_DIR, REQUIRED_COLUMNS
-from predictive_maintenance.utils.helpers import load_dataframe
-
-app = typer.Typer()
+from predictive_maintenance.config import REQUIRED_COLUMNS
 
 
 def validate_schema(df: pd.DataFrame) -> None:
@@ -94,28 +88,3 @@ def validate_dataset(df: pd.DataFrame) -> None:
     validate_numeric_columns(df)
 
     logger.success("All dataset validation checks passed successfully.")
-
-
-@app.command()
-def main(
-    input_file: Path = INTERIM_DATA_DIR / "train_preprocessed.csv",
-) -> None:
-    """
-    Validate the preprocessed dataset.
-
-    Parameters
-    ----------
-    input_file : Path
-        Path to the preprocessed dataset file.
-    """
-    if not input_file.exists():
-        logger.error(f"Input file does not exist: {input_file}")
-        raise FileNotFoundError(f"Input file does not exist: {input_file}")
-
-    df = load_dataframe(input_file)
-
-    validate_dataset(df)
-
-
-if __name__ == "__main__":
-    app()
