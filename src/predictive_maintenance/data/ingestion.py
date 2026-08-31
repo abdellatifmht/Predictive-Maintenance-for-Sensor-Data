@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pandas as pd
-import typer
 from loguru import logger
 
 from predictive_maintenance.config import RAW_DATA_DIR, EXTERNAL_DATA_DIR, RAW_COLUMNS
@@ -10,12 +9,6 @@ from predictive_maintenance.utils.helpers import (
     validate_required_columns,
 )
 
-app = typer.Typer()
-
-
-# ---------------------------------------------------------------------------
-# Loading functions
-# ---------------------------------------------------------------------------
 
 def load_cmapss(path: Path) -> pd.DataFrame:
     """
@@ -87,10 +80,6 @@ def load_rul_data(path: Path) -> pd.DataFrame:
     return df
 
 
-# ---------------------------------------------------------------------------
-# Ingestion pipeline
-# ---------------------------------------------------------------------------
-
 def ingest_dataset(
     train_path: Path,
     test_path: Path,
@@ -145,29 +134,3 @@ def ingest_dataset(
     logger.success(
         "Data ingestion process completed successfully."
     )
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-@app.command()
-def main(
-    train_path: Path = EXTERNAL_DATA_DIR / "train_FD001.txt",
-    test_path: Path = EXTERNAL_DATA_DIR / "test_FD001.txt",
-    rul_path: Path = EXTERNAL_DATA_DIR / "RUL_FD001.txt",
-    output_dir: Path = RAW_DATA_DIR,
-) -> None:
-    """
-    Ingest NASA CMAPSS datasets.
-    """
-    ingest_dataset(
-        train_path=train_path,
-        test_path=test_path,
-        rul_path=rul_path,
-        output_dir=output_dir,
-    )
-
-
-if __name__ == "__main__":
-    app()
