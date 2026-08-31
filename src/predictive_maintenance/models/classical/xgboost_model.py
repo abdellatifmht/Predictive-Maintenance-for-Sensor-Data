@@ -1,7 +1,8 @@
 import pandas as pd
 from xgboost import XGBRegressor
 
-from .base import BaseModel
+from predictive_maintenance.models import BaseModel
+
 
 class XGBoostModel(BaseModel):
     """XGBoost model for RUL prediction."""
@@ -25,7 +26,7 @@ class XGBoostModel(BaseModel):
             subsample=subsample,
             colsample_bytree=colsample_bytree,
             objective='reg:squarederror',
-            random_state=random_state
+            random_state=random_state,
             n_jobs=-1,
         )
 
