@@ -16,9 +16,11 @@ classifiers = [
     "License :: OSI Approved :: MIT License"
 ]
 dependencies = [
+    "dotenv>=0.9.9",
     "fastapi>=0.141.1",
     "ipython",
     "jupyterlab",
+    "lightgbm>=4.7.0",
     "loguru",
     "lstm>=0.1.0",
     "matplotlib",
