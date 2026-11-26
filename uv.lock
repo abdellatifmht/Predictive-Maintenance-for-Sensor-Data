@@ -2040,8 +2040,11 @@ monitoring = [
     { name = "streamlit", version = "1.67.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 notebooks = [
+    { name = "ipykernel" },
     { name = "jupyterlab" },
     { name = "matplotlib" },
+    { name = "nbclient" },
+    { name = "nbformat" },
     { name = "seaborn" },
 ]
 
@@ -2055,12 +2058,15 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "ipykernel", marker = "extra == 'notebooks'", specifier = ">=6,<8" },
     { name = "joblib", specifier = ">=1.4,<2" },
     { name = "jupyterlab", marker = "extra == 'notebooks'", specifier = ">=4,<5" },
     { name = "lightgbm", specifier = ">=4.5,<5" },
     { name = "loguru", specifier = ">=0.7,<1" },
     { name = "matplotlib", marker = "extra == 'notebooks'", specifier = ">=3.9,<4" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6,<2" },
+    { name = "nbclient", marker = "extra == 'notebooks'", specifier = ">=0.10,<1" },
+    { name = "nbformat", marker = "extra == 'notebooks'", specifier = ">=5.10,<6" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "pandas", specifier = ">=2.2,<3" },
     { name = "plotly", marker = "extra == 'monitoring'", specifier = ">=5.24,<7" },

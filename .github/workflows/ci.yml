@@ -12,7 +12,22 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: uv sync --locked --extra docs --extra monitoring
-      - run: uv run --no-sync ruff check src tests examples
-      - run: uv run --no-sync ruff format --check src tests examples
+      - run: uv run --no-sync ruff check src tests examples scripts
+      - run: uv run --no-sync ruff format --check src tests examples scripts
       - run: uv run --no-sync pytest
       - run: uv run --no-sync mkdocs build --strict -f docs/mkdocs.yml
+  notebooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --extra notebooks
+      - run: uv run --no-sync python scripts/run_notebooks.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: executed-notebooks
+          path: .uv-cache/notebook-runs
+          include-hidden-files: true

@@ -1,4 +1,4 @@
-.PHONY: install data train train-fast train-lstm predict evaluate api monitoring-reference monitoring-stream monitoring-dashboard docker-build docker-run test lint docs clean
+.PHONY: install data train train-fast train-lstm predict evaluate api monitoring-reference monitoring-stream monitoring-dashboard docker-build docker-run test lint docs notebooks clean
 
 PYTHON ?= uv run --no-sync python
 
@@ -45,11 +45,14 @@ test:
 	$(PYTHON) -m pytest
 
 lint:
-	$(PYTHON) -m ruff check src tests
-	$(PYTHON) -m ruff format --check src tests
+	$(PYTHON) -m ruff check src tests examples scripts
+	$(PYTHON) -m ruff format --check src tests examples scripts
 
 docs:
 	$(PYTHON) -m mkdocs build --strict -f docs/mkdocs.yml
+
+notebooks:
+	$(PYTHON) scripts/run_notebooks.py
 
 # Never remove source datasets or trained models as part of routine cleanup.
 clean:

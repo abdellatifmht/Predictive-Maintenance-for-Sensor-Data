@@ -17,7 +17,7 @@ Reviewed on 26 November 2026. Scope: the Python package, bundled FD001 data work
 | API | Simulator used a different engine identifier field; generic exceptions became input errors | Align request fields, accept the legacy alias, return 422 for input errors and 503 when untrained |
 | Evaluation | Unmatched prediction keys could disappear; cycle aggregation differed by estimator | Validate one-to-one keys and evaluate the final labelled cycle of every engine consistently |
 | Monitoring | Missing dependencies and CLI path annotations; small or failed traffic could break dashboard | Add monitoring extra, typed paths, drift sample checks, constant-reference PSI bins, partial-log handling and small/error-only traffic guards |
-| Notebooks | Three stage notebooks were empty invalid JSON files | Implement valid feature, training and evaluation notebooks using package functions |
+| Notebooks | Three empty files; older notebooks used obsolete paths, incompatible artifacts, hard-coded scores and saved errors | Migrate all seven notebooks to the shared package, generate measured reports and plots, and add fresh-kernel execution checks |
 | Containers | Missing requirements file and incorrect application module | Install locked dependencies, use the correct ASGI module, include OpenMP, run as non-root, mount models and check readiness |
 | Maintenance | One deliberately failing test, empty test files and template documentation | Add regression and integration coverage, GitHub Actions, working quick start and API/evaluation documentation |
 
@@ -35,17 +35,18 @@ The selected model also achieved R2 **0.8330** and PHM08 score **607.3937**. Mod
 
 ## Verification
 
-- **40 core tests pass**, including a complete small classical training run and API/batch prediction equivalence. Optional dashboard and LSTM test modules skip when their dependencies are unavailable.
+- **47 tests pass**, including a complete small classical training run, API/batch prediction equivalence, and source/output validation for all seven notebooks. Optional dashboard and LSTM test modules skip when their dependencies are unavailable.
 - The full FD001 ingestion, preprocessing, five-fold training, artifact loading, prediction and evaluation run completed.
 - Live HTTP health and prediction checks succeeded. All 100 test engines matched saved batch predictions within API rounding (maximum difference 0.004976 cycles). Engine 1 returned RUL 119.17 using the last 10 of 31 readings.
 - The training reference profile was generated for 15 retained sensors.
-- Source lint and formatting checks pass. The new stage notebooks are valid JSON and their Python cells compile.
+- Source lint and formatting checks pass. Every maintained notebook is valid JSON with compilable Python cells and no saved error outputs.
+- All seven notebooks executed locally in fresh project kernels: 44 code cells and 16 saved figures. The committed notebook outputs come from those successful executions. The runner works from each notebook's own directory and the root notebook runs the entire pipeline from source data.
 - The MkDocs documentation builds successfully with strict validation.
 
 ## Practical limits
 
 Docker Desktop is installed but its daemon was stopped, so the image definition could not be built or run in this session. GitHub Actions is configured for Python 3.10 and 3.13; those hosted jobs run after pushing. Local checks used Python 3.13.
 
-The optional LSTM has a focused checkpoint and short-history regression test that runs when PyTorch is installed; a full LSTM benchmark was not performed. It remains an experiment and is not automatically promoted against classical models without equivalent validation. The original analysis notebooks retain their historical outputs; maintained execution uses package commands and stage notebooks 03-05.
+The optional LSTM has a focused checkpoint and short-history regression test that runs when PyTorch is installed; a full LSTM benchmark was not performed. It remains an experiment and is not automatically promoted against classical models without equivalent validation. All notebooks now use the maintained package and generated artifacts; notebook model scores are read from results rather than embedded as constants. A separate GitHub Actions job executes the complete notebook workflow and uploads executed copies.
 
 Monitoring is a distribution-drift demonstration, with logs produced by the simulator. It does not provide labelled online accuracy, automatic retraining, or comprehensive API request collection. Health labels are RUL thresholds rather than learned fault diagnoses.
