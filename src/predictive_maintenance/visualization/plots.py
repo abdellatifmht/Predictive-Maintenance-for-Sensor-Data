@@ -36,9 +36,7 @@ def plot_rul_distribution(
     Plot the distribution of RUL values.
     """
 
-    fig, ax = plt.subplots(
-        figsize=(10, 6)
-    )
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     sns.histplot(
         data=df,
@@ -47,17 +45,11 @@ def plot_rul_distribution(
         ax=ax,
     )
 
-    ax.set_title(
-        "RUL Distribution"
-    )
+    ax.set_title("RUL Distribution")
 
-    ax.set_xlabel(
-        "Remaining Useful Life"
-    )
+    ax.set_xlabel("Remaining Useful Life")
 
-    ax.set_ylabel(
-        "Frequency"
-    )
+    ax.set_ylabel("Frequency")
 
     save_figure(
         fig,
@@ -75,13 +67,9 @@ def plot_sensor_distribution(
     """
 
     if sensor not in df.columns:
-        raise ValueError(
-            f"Sensor not found: {sensor}"
-        )
+        raise ValueError(f"Sensor not found: {sensor}")
 
-    fig, ax = plt.subplots(
-        figsize=(10, 6)
-    )
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     sns.histplot(
         data=df,
@@ -90,9 +78,7 @@ def plot_sensor_distribution(
         ax=ax,
     )
 
-    ax.set_title(
-        f"{sensor} Distribution"
-    )
+    ax.set_title(f"{sensor} Distribution")
 
     ax.set_xlabel(sensor)
     ax.set_ylabel("Frequency")
@@ -114,31 +100,21 @@ def plot_sensor_trend(
     """
 
     if sensor not in df.columns:
-        raise ValueError(
-            f"Sensor not found: {sensor}"
-        )
+        raise ValueError(f"Sensor not found: {sensor}")
 
-    engine = df[
-        df["unit"] == unit
-    ].sort_values("cycle")
+    engine = df[df["unit"] == unit].sort_values("cycle")
 
     if engine.empty:
-        raise ValueError(
-            f"Unit not found: {unit}"
-        )
+        raise ValueError(f"Unit not found: {unit}")
 
-    fig, ax = plt.subplots(
-        figsize=(10, 6)
-    )
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     ax.plot(
         engine["cycle"],
         engine[sensor],
     )
 
-    ax.set_title(
-        f"{sensor} evolution - Unit {unit}"
-    )
+    ax.set_title(f"{sensor} evolution - Unit {unit}")
 
     ax.set_xlabel("Cycle")
     ax.set_ylabel(sensor)
@@ -160,27 +136,19 @@ def plot_rul_by_cycle(
     Plot RUL evolution for one engine.
     """
 
-    engine = df[
-        df["unit"] == unit
-    ].sort_values("cycle")
+    engine = df[df["unit"] == unit].sort_values("cycle")
 
     if engine.empty:
-        raise ValueError(
-            f"Unit not found: {unit}"
-        )
+        raise ValueError(f"Unit not found: {unit}")
 
-    fig, ax = plt.subplots(
-        figsize=(10, 6)
-    )
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     ax.plot(
         engine["cycle"],
         engine["RUL"],
     )
 
-    ax.set_title(
-        f"RUL evolution - Unit {unit}"
-    )
+    ax.set_title(f"RUL evolution - Unit {unit}")
 
     ax.set_xlabel("Cycle")
     ax.set_ylabel("RUL")
@@ -201,15 +169,11 @@ def plot_correlation_matrix(
     Plot correlation matrix for numerical features.
     """
 
-    numeric_df = df.select_dtypes(
-        include="number"
-    )
+    numeric_df = df.select_dtypes(include="number")
 
     correlation = numeric_df.corr()
 
-    fig, ax = plt.subplots(
-        figsize=(14, 10)
-    )
+    fig, ax = plt.subplots(figsize=(14, 10))
 
     sns.heatmap(
         correlation,
@@ -218,9 +182,7 @@ def plot_correlation_matrix(
         ax=ax,
     )
 
-    ax.set_title(
-        "Feature Correlation Matrix"
-    )
+    ax.set_title("Feature Correlation Matrix")
 
     save_figure(
         fig,
@@ -237,9 +199,7 @@ def plot_actual_vs_predicted(
     Plot actual RUL against predicted RUL.
     """
 
-    fig, ax = plt.subplots(
-        figsize=(8, 8)
-    )
+    fig, ax = plt.subplots(figsize=(8, 8))
 
     ax.scatter(
         y_true,
@@ -264,17 +224,11 @@ def plot_actual_vs_predicted(
         linestyle="--",
     )
 
-    ax.set_title(
-        "Actual vs Predicted RUL"
-    )
+    ax.set_title("Actual vs Predicted RUL")
 
-    ax.set_xlabel(
-        "Actual RUL"
-    )
+    ax.set_xlabel("Actual RUL")
 
-    ax.set_ylabel(
-        "Predicted RUL"
-    )
+    ax.set_ylabel("Predicted RUL")
 
     ax.grid(True)
 
@@ -295,9 +249,7 @@ def plot_residuals(
 
     residuals = y_true - y_pred
 
-    fig, ax = plt.subplots(
-        figsize=(10, 6)
-    )
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     ax.scatter(
         y_pred,
@@ -310,17 +262,11 @@ def plot_residuals(
         linestyle="--",
     )
 
-    ax.set_title(
-        "Prediction Residuals"
-    )
+    ax.set_title("Prediction Residuals")
 
-    ax.set_xlabel(
-        "Predicted RUL"
-    )
+    ax.set_xlabel("Predicted RUL")
 
-    ax.set_ylabel(
-        "Residual"
-    )
+    ax.set_ylabel("Residual")
 
     ax.grid(True)
 
@@ -344,19 +290,12 @@ def plot_model_comparison(
         "RMSE",
     }
 
-    missing = (
-        required_columns
-        - set(results.columns)
-    )
+    missing = required_columns - set(results.columns)
 
     if missing:
-        raise ValueError(
-            f"Missing columns: {missing}"
-        )
+        raise ValueError(f"Missing columns: {missing}")
 
-    fig, ax = plt.subplots(
-        figsize=(10, 6)
-    )
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     x = range(len(results))
 
@@ -384,13 +323,9 @@ def plot_model_comparison(
         ha="right",
     )
 
-    ax.set_title(
-        "Model Performance Comparison"
-    )
+    ax.set_title("Model Performance Comparison")
 
-    ax.set_ylabel(
-        "Error"
-    )
+    ax.set_ylabel("Error")
 
     ax.legend()
 

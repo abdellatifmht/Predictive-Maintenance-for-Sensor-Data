@@ -1,9 +1,9 @@
 from pathlib import Path
 
-import pandas as pd
 from loguru import logger
+import pandas as pd
 
-from predictive_maintenance.config import RAW_DATA_DIR, EXTERNAL_DATA_DIR, RAW_COLUMNS
+from predictive_maintenance.config import RAW_COLUMNS
 from predictive_maintenance.utils.helpers import (
     save_dataframe,
     validate_required_columns,
@@ -30,17 +30,14 @@ def load_cmapss(path: Path) -> pd.DataFrame:
 
     logger.info(f"Loading CMAPSS dataset from {path}")
 
-    df = pd.read_csv(
-        path,
-        sep=r"\s+",
-        header=None,
-        names=RAW_COLUMNS,
-    )
+    df = pd.read_csv(path, sep=r"\s+", header=None)
+    if df.shape[1] != len(RAW_COLUMNS):
+        raise ValueError(f"Expected {len(RAW_COLUMNS)} columns in {path}; got {df.shape[1]}")
+    df.columns = RAW_COLUMNS
+    if df.empty or not all(pd.api.types.is_numeric_dtype(df[col]) for col in df):
+        raise ValueError(f"Expected non-empty numeric sensor data in {path}")
 
-    logger.success(
-        f"CMAPSS dataset loaded: "
-        f"{df.shape[0]:,} rows × {df.shape[1]} columns"
-    )
+    logger.success(f"CMAPSS dataset loaded: {df.shape[0]:,} rows × {df.shape[1]} columns")
 
     return df
 
@@ -72,10 +69,7 @@ def load_rul_data(path: Path) -> pd.DataFrame:
         names=["RUL"],
     )
 
-    logger.success(
-        f"RUL data loaded: "
-        f"{df.shape[0]:,} rows × {df.shape[1]} columns"
-    )
+    logger.success(f"RUL data loaded: {df.shape[0]:,} rows × {df.shape[1]} columns")
 
     return df
 
@@ -131,6 +125,4 @@ def ingest_dataset(
         index=False,
     )
 
-    logger.success(
-        "Data ingestion process completed successfully."
-    )
+    logger.success("Data ingestion process completed successfully.")

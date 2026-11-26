@@ -1,20 +1,15 @@
 """
-Full reproducible pipeline: ingestion -> preprocessing -> feature engineering -> training.
-
-This is what `make train` calls (see Makefile). Running this single command from a
-clean checkout (only `data/external/*.txt` present) regenerates every intermediate
-file and every model artifact in `models/` from scratch — the semaine 5 requirement
-("Trained models versioned, reproducible from a single make train").
+Reproducible ingestion, preprocessing, feature engineering, training and evaluation.
 
 Usage:
     python -m predictive_maintenance.pipeline
-    python -m predictive_maintenance.pipeline --no-train-lstm   # skip the slower LSTM step
+    python -m predictive_maintenance.pipeline --train-lstm   # optional experiment
 """
 
 import shutil
 
-import typer
 from loguru import logger
+import typer
 
 from predictive_maintenance.config import (
     EXTERNAL_DATA_DIR,
@@ -23,25 +18,25 @@ from predictive_maintenance.config import (
     PROCESSED_DATA_DIR,
     RAW_DATA_DIR,
     RESULTS_DIR,
+    RUL_CAP,
+    SETTINGS,
 )
 from predictive_maintenance.data.ingestion import ingest_dataset
 from predictive_maintenance.data.preprocessing import preprocess_dataset
 from predictive_maintenance.data.validation import validate_dataset
 from predictive_maintenance.features.engineering import engineer_dataset
+from predictive_maintenance.models.evaluate import evaluate
 from predictive_maintenance.models.predict import predict
 from predictive_maintenance.models.train import train_pipeline
-from predictive_maintenance.models.evaluate import evaluate
 from predictive_maintenance.utils.helpers import load_dataframe
 
 app = typer.Typer()
 
-RUL_CAP = 125
-
 
 @app.command()
 def main(
-    n_splits: int = 5,
-    train_lstm: bool = True,
+    n_splits: int = SETTINGS.get("n_splits", 5),
+    train_lstm: bool = False,
 ) -> None:
     """Run the complete pipeline end to end, from raw .txt files to saved, evaluated models."""
 
@@ -112,6 +107,7 @@ def main(
         test_features_path=PROCESSED_DATA_DIR / "test_features.csv",
         test_labels_path=PROCESSED_DATA_DIR / "test_labels.csv",
         n_splits=n_splits,
+        train_lstm=train_lstm,
     )
 
     logger.info("################################################")
@@ -139,7 +135,9 @@ def main(
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy(constant_columns_path, MODELS_DIR / "constant_columns.json")
-    logger.info(f"Copied {constant_columns_path} -> {MODELS_DIR / 'constant_columns.json'} (for serving).")
+    logger.info(
+        f"Copied {constant_columns_path} -> {MODELS_DIR / 'constant_columns.json'} (for serving)."
+    )
 
 
 if __name__ == "__main__":

@@ -1,20 +1,24 @@
 from contextlib import asynccontextmanager
-from loguru import logger
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from loguru import logger
 
 from .inference import model_service
 from .schemas import HealthResponse, PredictRequest, PredictResponse
-
 
 logger.info("Starting predictive_maintenance_api")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    model_service.load()
+    try:
+        model_service.load()
+    except FileNotFoundError as exc:
+        logger.warning("Model unavailable; train the pipeline before serving: {}", exc)
     yield
+
 
 app = FastAPI(
     title="Predictive Maintenance API",
@@ -64,9 +68,8 @@ def predict(request: PredictRequest) -> PredictResponse:
     try:
         readings_dicts = [r.model_dump(exclude_none=True) for r in request.readings]
         result = model_service.predict(readings_dicts, unit=request.unit)
-    except Exception as e:
-        logger.exception(f"Prediction error: {e}")
-        raise HTTPException(status_code=400, detail=f"Error during prediction: {e}") from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     logger.info(
         f"Prediction — unit={request.unit} model={result['model_name']}"

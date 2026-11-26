@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 
@@ -65,6 +65,8 @@ class LSTMModel:
         batch_size: int = 64,
         random_state: int = 42,
     ):
+        if sequence_length < 1 or epochs < 1 or batch_size < 1:
+            raise ValueError("sequence_length, epochs and batch_size must be positive")
         self.sequence_length = sequence_length
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -87,13 +89,17 @@ class LSTMModel:
     # ------------------------------------------------------------------
 
     def _scale(self, X: pd.DataFrame) -> np.ndarray:
-        return ((X[self.feature_columns] - self.feature_mean) / self.feature_std).to_numpy(dtype=np.float32)
+        return ((X[self.feature_columns] - self.feature_mean) / self.feature_std).to_numpy(
+            dtype=np.float32
+        )
 
     # ------------------------------------------------------------------
     # Construction des séquences
     # ------------------------------------------------------------------
 
-    def _build_training_sequences(self, X: pd.DataFrame, y: pd.Series) -> tuple[np.ndarray, np.ndarray]:
+    def _build_training_sequences(
+        self, X: pd.DataFrame, y: pd.Series
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Une séquence par cycle de chaque moteur (fenêtre glissante causale,
         rembourrée par répétition de la première ligne si le moteur n'a pas
         encore `sequence_length` cycles d'historique).
@@ -150,10 +156,16 @@ class LSTMModel:
         y: pd.Series,
         X_val: pd.DataFrame | None = None,
         y_val: pd.Series | None = None,
-    ) -> "LSTMModel":
+    ) -> LSTMModel:
+        if X.empty or len(X) != len(y):
+            raise ValueError("Non-empty aligned training features and labels are required")
+        if (X_val is None) != (y_val is None):
+            raise ValueError("Validation features and labels must be provided together")
+        if X_val is not None and (X_val.empty or len(X_val) != len(y_val)):
+            raise ValueError("Non-empty aligned validation features and labels are required")
         self.feature_columns = [c for c in X.columns if c not in ("unit", "cycle")]
         self.feature_mean = X[self.feature_columns].mean()
-        self.feature_std = X[self.feature_columns].std().replace(0, 1.0)
+        self.feature_std = X[self.feature_columns].std().replace(0, 1.0).fillna(1.0)
 
         X_seq, y_seq = self._build_training_sequences(X, y)
 
@@ -202,9 +214,13 @@ class LSTMModel:
 
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    best_state = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}
+                    best_state = {
+                        k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()
+                    }
 
-                print(f"Epoch {epoch + 1:03d}/{self.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
+                print(
+                    f"Epoch {epoch + 1:03d}/{self.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}"
+                )
             else:
                 print(f"Epoch {epoch + 1:03d}/{self.epochs} - Train Loss: {train_loss:.4f}")
 
@@ -234,6 +250,8 @@ class LSTMModel:
         """Renvoie une prédiction par moteur présent dans `X`, dans l'ordre
         croissant des identifiants de moteur (comportement de `groupby`).
         """
+        if X.empty:
+            raise ValueError("Prediction features must not be empty")
         if self.model is None:
             raise RuntimeError("Le modèle n'est pas entraîné — appeler fit() d'abord.")
 
@@ -275,7 +293,7 @@ class LSTMModel:
         )
 
     @classmethod
-    def load(cls, path: Path) -> "LSTMModel":
+    def load(cls, path: Path) -> LSTMModel:
         path = Path(path).with_suffix(".pt")
         checkpoint = torch.load(path, map_location="cpu", weights_only=False)
 

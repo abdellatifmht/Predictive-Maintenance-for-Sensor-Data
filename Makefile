@@ -1,53 +1,56 @@
-.PHONY: install data train predict evaluate api monitoring-reference monitoring-stream monitoring-dashboard docker-build docker-run test clean
+.PHONY: install data train train-fast train-lstm predict evaluate api monitoring-reference monitoring-stream monitoring-dashboard docker-build docker-run test lint docs clean
 
-PYTHON := python3
+PYTHON ?= uv run --no-sync python
 
 install:
-	pip install -r requirements.txt
+	uv sync --locked
 
-# ------------------------------------------------------------------
-# Semaine 5 — pipeline complet, reproductible en une commande.
-# ------------------------------------------------------------------
+data:
+	$(PYTHON) -m predictive_maintenance.dataset
+
 train:
-	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.pipeline
+	$(PYTHON) -m predictive_maintenance.pipeline
 
 train-fast:
-	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.pipeline --no-train-lstm
+	$(PYTHON) -m predictive_maintenance.pipeline --no-train-lstm
+
+train-lstm:
+	$(PYTHON) -m predictive_maintenance.pipeline --train-lstm
 
 predict:
-	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.models.predict
+	$(PYTHON) -m predictive_maintenance.models.predict
 
 evaluate:
-	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.models.evaluate
+	$(PYTHON) -m predictive_maintenance.models.evaluate
 
-# ------------------------------------------------------------------
-# Semaine 6 — serving
-# ------------------------------------------------------------------
 api:
-	PYTHONPATH=src uvicorn predictive_maintenance.api.main:app --reload --port 8000
+	$(PYTHON) -m uvicorn predictive_maintenance.api.main:app --reload --port 8000
+
+monitoring-reference:
+	$(PYTHON) -m predictive_maintenance.monitoring.build_reference
+
+monitoring-stream:
+	$(PYTHON) -m predictive_maintenance.monitoring.simulate_stream
+
+monitoring-dashboard:
+	$(PYTHON) -m streamlit run src/predictive_maintenance/monitoring/dashboard.py
 
 docker-build:
 	docker build -t predictive-maintenance-api .
 
 docker-run: docker-build
-	docker run --rm -p 8000:8000 -v $(PWD)/models:/app/models:ro predictive-maintenance-api
+	docker run --rm -p 8000:8000 -v "$(CURDIR)/models:/app/models:ro" predictive-maintenance-api
 
-# ------------------------------------------------------------------
-# Semaine 7 — monitoring
-# ------------------------------------------------------------------
-monitoring-reference:
-	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.monitoring.build_reference
-
-monitoring-stream:
-	PYTHONPATH=src $(PYTHON) -m predictive_maintenance.monitoring.simulate_stream
-
-monitoring-dashboard:
-	PYTHONPATH=src streamlit run src/predictive_maintenance/monitoring/dashboard.py
-
-# ------------------------------------------------------------------
 test:
-	PYTHONPATH=src pytest tests/ -v
+	$(PYTHON) -m pytest
 
+lint:
+	$(PYTHON) -m ruff check src tests
+	$(PYTHON) -m ruff format --check src tests
+
+docs:
+	$(PYTHON) -m mkdocs build --strict -f docs/mkdocs.yml
+
+# Never remove source datasets or trained models as part of routine cleanup.
 clean:
-	rm -rf data/raw data/interim data/processed models results
-	find . -type d -name "__pycache__" -exec rm -rf {} +
+	$(PYTHON) -c "import shutil; from pathlib import Path; [shutil.rmtree(p) for p in Path('.').glob('src/**/__pycache__')]; shutil.rmtree('.pytest_cache', ignore_errors=True)"

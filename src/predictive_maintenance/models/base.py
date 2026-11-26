@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-import pandas as pd
 import joblib
+import pandas as pd
 
 
 class BaseModel(ABC):
@@ -13,13 +13,8 @@ class BaseModel(ABC):
         self.model = None
 
     @abstractmethod
-    def fit(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series
-    ) -> None:
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> None:
         """Train the model on the given data."""
-        pass
 
     @abstractmethod
     def predict(
@@ -27,7 +22,6 @@ class BaseModel(ABC):
         X: pd.DataFrame,
     ) -> pd.Series:
         """Make predictions on the given data."""
-        pass
 
     def save(self, path: Path) -> None:
         """Save the model to the given path."""

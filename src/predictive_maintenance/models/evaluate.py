@@ -1,242 +1,96 @@
+"""Strictly align predictions and labels, then report the last cycle per engine."""
+
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from loguru import logger
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import typer
 
-from sklearn.metrics import (
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score,
-)
+from predictive_maintenance.config import PROCESSED_DATA_DIR, RESULTS_DIR
 
+app = typer.Typer()
 TARGET_COLUMN = "RUL"
 
 
-def load_predictions(
-    predictions_path: Path,
-) -> pd.DataFrame:
-    """
-    Load model predictions.
-    """
-
-    if not predictions_path.exists():
-        raise FileNotFoundError(
-            f"Predictions file not found: "
-            f"{predictions_path}"
-        )
-
-    return pd.read_csv(
-        predictions_path
-    )
+def load_predictions(predictions_path: Path) -> pd.DataFrame:
+    return pd.read_csv(predictions_path)
 
 
-def load_labels(
-    labels_path: Path,
-) -> pd.DataFrame:
-    """
-    Load ground-truth labels.
-    """
-
-    if not labels_path.exists():
-        raise FileNotFoundError(
-            f"Labels file not found: {labels_path}"
-        )
-
-    return pd.read_csv(
-        labels_path
-    )
+def load_labels(labels_path: Path) -> pd.DataFrame:
+    return pd.read_csv(labels_path)
 
 
-def phm08_score(y_true: pd.Series, y_pred: pd.Series) -> float:
-    """
-    Calculate the PHM08 score.
-    """
-    errors = y_pred - y_true
-
-    score = 0.0
-
-    for error in errors:
-        if error < 0:
-            score += np.exp(-error / 13) - 1
-        else:
-            score += np.exp(error / 10) - 1
-
-    return score
+def phm08_score(y_true, y_pred) -> float:
+    errors = np.asarray(y_pred) - np.asarray(y_true)
+    return float(np.expm1(np.where(errors < 0, -errors / 13, errors / 10)).sum())
 
 
-def calculate_metrics(
-    y_true: pd.Series,
-    y_pred: pd.Series,
-) -> dict[str, float]:
-    """
-    Calculate regression metrics and the PHM08 score.
-    """
-
-    mae = mean_absolute_error(
-        y_true,
-        y_pred,
-    )
-
-    rmse = mean_squared_error(
-        y_true,
-        y_pred,
-    ) ** 0.5
-
-    r2 = r2_score(
-        y_true,
-        y_pred,
-    )
-
+def calculate_metrics(y_true, y_pred) -> dict[str, float]:
     return {
-        "MAE": mae,
-        "RMSE": rmse,
-        "R2": r2,
+        "MAE": float(mean_absolute_error(y_true, y_pred)),
+        "RMSE": float(mean_squared_error(y_true, y_pred) ** 0.5),
+        "R2": float(r2_score(y_true, y_pred)) if len(y_true) > 1 else float("nan"),
         "PHM08": phm08_score(y_true, y_pred),
     }
 
 
-def evaluate_by_unit(
-    predictions: pd.DataFrame,
-) -> pd.DataFrame:
-
-    results = []
-
+def evaluate_by_unit(predictions: pd.DataFrame) -> pd.DataFrame:
+    rows = []
     for unit, group in predictions.groupby("unit"):
+        metrics = calculate_metrics(group["RUL"], group["prediction"])
+        rows.append({"unit": unit, "MAE": metrics["MAE"], "RMSE": metrics["RMSE"]})
+    return pd.DataFrame(rows)
 
-        mae = mean_absolute_error(
-            group["RUL"],
-            group["prediction"],
-        )
 
-        rmse = mean_squared_error(
-            group["RUL"],
-            group["prediction"],
-        ) ** 0.5
-
-        results.append(
-            {
-                "unit": unit,
-                "MAE": mae,
-                "RMSE": rmse,
-            }
-        )
-
-    return pd.DataFrame(results)
+def align_predictions(predictions: pd.DataFrame, labels: pd.DataFrame) -> pd.DataFrame:
+    keys = ["unit", "cycle"]
+    if not set(keys + ["prediction"]).issubset(predictions):
+        raise ValueError("Predictions must contain unit, cycle and prediction")
+    if not set(keys + [TARGET_COLUMN]).issubset(labels):
+        raise ValueError("Labels must contain unit, cycle and RUL")
+    if predictions.empty or labels.empty:
+        raise ValueError("Predictions and labels must be non-empty")
+    joined = predictions.merge(
+        labels[keys + [TARGET_COLUMN]], on=keys, how="left", validate="one_to_one"
+    )
+    if joined[TARGET_COLUMN].isna().any():
+        raise ValueError("Predictions contain unit/cycle keys without matching labels")
+    if not np.isfinite(joined[["RUL", "prediction"]].to_numpy()).all():
+        raise ValueError("Labels and predictions must be finite")
+    # Require the real last cycle of every labelled engine, even for LSTM output.
+    expected = labels.loc[labels.groupby("unit")["cycle"].idxmax(), keys]
+    actual = joined.loc[joined.groupby("unit")["cycle"].idxmax(), keys]
+    if set(map(tuple, expected.to_numpy())) != set(map(tuple, actual.to_numpy())):
+        raise ValueError("Predictions must include the last labelled cycle of every engine")
+    return joined
 
 
 def evaluate(
     predictions_path: Path,
     labels_path: Path,
     output_path: Path,
-    evaluation_by_unit_path: Path
+    evaluation_by_unit_path: Path,
 ) -> None:
-    """
-    Evaluate model predictions.
-    """
+    joined = align_predictions(load_predictions(predictions_path), load_labels(labels_path))
+    last = joined.loc[joined.groupby("unit")["cycle"].idxmax()].sort_values("unit")
+    metrics = calculate_metrics(last["RUL"], last["prediction"])
+    metrics["n_engines"] = len(last)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    evaluation_by_unit_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([metrics]).to_csv(output_path, index=False)
+    evaluate_by_unit(last).to_csv(evaluation_by_unit_path, index=False)
 
-    logger.info(
-        "Starting model evaluation..."
-    )
 
-    predictions = load_predictions(
-        predictions_path
-    )
+@app.command()
+def main(
+    predictions_path: Path = PROCESSED_DATA_DIR / "test_predictions.csv",
+    labels_path: Path = PROCESSED_DATA_DIR / "test_labels.csv",
+    output_path: Path = RESULTS_DIR / "evaluation.csv",
+    evaluation_by_unit_path: Path = RESULTS_DIR / "evaluation_by_unit.csv",
+) -> None:
+    evaluate(predictions_path, labels_path, output_path, evaluation_by_unit_path)
 
-    labels = load_labels(
-        labels_path
-    )
 
-    if TARGET_COLUMN not in labels.columns:
-        raise ValueError(
-            f"Missing target column: "
-            f"{TARGET_COLUMN}"
-        )
-
-    if "unit" in predictions.columns and "cycle" in predictions.columns:
-
-        predictions = predictions.merge(
-            labels[
-                ["unit", "cycle", TARGET_COLUMN]
-            ],
-            on=["unit", "cycle"],
-            how="inner",
-        )
-
-        y_true = predictions[
-            TARGET_COLUMN
-        ]
-
-        y_pred = predictions[
-            "prediction"
-        ]
-
-    else:
-
-        if len(predictions) != len(labels):
-            raise ValueError(
-                "Predictions and labels have "
-                "different numbers of rows."
-            )
-
-        y_true = labels[
-            TARGET_COLUMN
-        ]
-
-        y_pred = predictions[
-            "prediction"
-        ]
-
-    metrics = calculate_metrics(
-        y_true,
-        y_pred,
-    )
-
-    evaluation_by_unit = evaluate_by_unit(
-        predictions
-    )
-
-    logger.info(
-        f"MAE:  {metrics['MAE']:.4f}"
-    )
-
-    logger.info(
-        f"RMSE: {metrics['RMSE']:.4f}"
-    )
-
-    logger.info(
-        f"R²:   {metrics['R2']:.4f}"
-    )
-    logger.info(
-        f"PHM08: {metrics['PHM08']:.4f}"
-    )
-
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    pd.DataFrame(
-        [metrics]
-    ).to_csv(
-        output_path,
-        index=False,
-    )
-
-    logger.success(
-        f"Metrics saved to {output_path}"
-    )
-
-    evaluation_by_unit_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    evaluation_by_unit.to_csv(
-        evaluation_by_unit_path,
-        index=False,
-    )
-
-    logger.success(
-        f"Evaluation by unit saved to {evaluation_by_unit_path}"
-    )
+if __name__ == "__main__":
+    app()

@@ -1,7 +1,9 @@
-from pathlib import Path
 import json
-import pandas as pd
+from pathlib import Path
+
 from loguru import logger
+import pandas as pd
+
 from predictive_maintenance.config import RAW_COLUMNS
 from predictive_maintenance.utils.helpers import (
     save_dataframe,
@@ -29,14 +31,9 @@ def load_data(path: Path) -> pd.DataFrame:
 
     logger.info(f"Loading dataset from {path}")
 
-    df = pd.read_csv(
-        path
-    )
+    df = pd.read_csv(path)
 
-    logger.success(
-        f"Dataset loaded: "
-        f"{df.shape[0]:,} rows × {df.shape[1]} columns"
-    )
+    logger.success(f"Dataset loaded: {df.shape[0]:,} rows × {df.shape[1]} columns")
 
     return df
 
@@ -56,7 +53,7 @@ def remove_empty_columns(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with empty columns removed.
     """
     initial_columns = df.shape[1]
-    df_cleaned = df.dropna(axis=1, how='all')
+    df_cleaned = df.dropna(axis=1, how="all")
     removed_columns = initial_columns - df_cleaned.shape[1]
 
     if removed_columns > 0:
@@ -71,7 +68,11 @@ def get_constant_columns(df: pd.DataFrame) -> list[str]:
     """
     Identify columns with zero variance (constant columns).
     """
-    return [col for col in df.columns if df[col].nunique(dropna=False) <= 1]
+    return [
+        col
+        for col in df.columns
+        if col not in ("unit", "cycle", "RUL") and df[col].nunique(dropna=False) <= 1
+    ]
 
 
 def remove_constant_columns(
@@ -107,21 +108,30 @@ def remove_constant_columns(
 
 
 def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
-    """ Handle missing values using forward-fill followed by backward-fill. """
+    """Handle missing values using forward-fill followed by backward-fill."""
 
     missing_values_count = df.isnull().sum().sum()
     if missing_values_count == 0:
         logger.info("No missing values found.")
         return df
 
-    logger.info(f"Handling {missing_values_count} missing values using forward-fill and backward-fill.")
+    logger.info(
+        f"Handling {missing_values_count} missing values using forward-fill and backward-fill."
+    )
 
     # Fill values within each engine independently
-    df = df.groupby('unit').apply(lambda group: group.ffill().bfill()).reset_index(drop=True)
+    # Use only earlier observations; future readings must not leak into a cycle's features.
+    df = sort_by_unit_and_cycle(df).copy()
+    value_columns = [col for col in df.columns if col not in ("unit", "cycle", "RUL")]
+    df[value_columns] = df.groupby("unit")[value_columns].ffill()
+    if df[value_columns].isna().any().any():
+        raise ValueError("Missing initial sensor readings cannot be filled causally.")
 
     missing_values_count_after = df.isnull().sum().sum()
 
-    logger.success(f"Missing values handled. Remaining missing values: {missing_values_count_after}")
+    logger.success(
+        f"Missing values handled. Remaining missing values: {missing_values_count_after}"
+    )
 
     return df
 
@@ -140,7 +150,7 @@ def sort_by_unit_and_cycle(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Sorted DataFrame.
     """
-    return df.sort_values(by=['unit', 'cycle']).reset_index(drop=True)
+    return df.sort_values(by=["unit", "cycle"]).reset_index(drop=True)
 
 
 def create_rul(df: pd.DataFrame, cap: int | None = 125) -> pd.DataFrame:
@@ -173,12 +183,12 @@ def create_rul(df: pd.DataFrame, cap: int | None = 125) -> pd.DataFrame:
     logger.info("Creating Remaining Useful Life (RUL) column.")
 
     # Calculate RUL for each unit
-    max_cycles = df.groupby('unit')['cycle'].transform('max')
-    df['RUL'] = max_cycles - df['cycle']
+    max_cycles = df.groupby("unit")["cycle"].transform("max")
+    df["RUL"] = max_cycles - df["cycle"]
 
     if cap is not None:
-        n_capped = (df['RUL'] > cap).sum()
-        df['RUL'] = df['RUL'].clip(upper=cap)
+        n_capped = (df["RUL"] > cap).sum()
+        df["RUL"] = df["RUL"].clip(upper=cap)
         logger.info(f"RUL capped at {cap} cycles ({n_capped:,} rows affected).")
 
     logger.success("RUL column created successfully.")
@@ -224,9 +234,10 @@ def add_rul_from_ground_truth(
     rul_lookup["unit"] = rul_lookup.index + 1  # RUL_FD001.txt is ordered by unit_number, 1-indexed
     rul_lookup = rul_lookup.rename(columns={"RUL": "_rul_at_last_cycle"})
 
+    df = df.merge(
+        rul_lookup[["unit", "_rul_at_last_cycle"]], on="unit", how="left", validate="many_to_one"
+    )
     max_cycle = df.groupby("unit")["cycle"].transform("max")
-
-    df = df.merge(rul_lookup[["unit", "_rul_at_last_cycle"]], on="unit", how="left")
 
     if df["_rul_at_last_cycle"].isna().any():
         missing_units = df.loc[df["_rul_at_last_cycle"].isna(), "unit"].unique().tolist()
@@ -287,14 +298,15 @@ def preprocess_data(
     """
     if not is_train and rul_df is None:
         raise ValueError("rul_df is required when is_train=False (test-style dataset).")
+    if not is_train and constant_columns is None:
+        raise ValueError("Training constant_columns are required for test preprocessing.")
 
     validate_required_columns(df, RAW_COLUMNS)
-    df = remove_empty_columns(df)
-
     if constant_columns is None:
         constant_columns = get_constant_columns(df)
     df = remove_constant_columns(df, constant_columns=constant_columns)
 
+    df = sort_by_unit_and_cycle(df)
     df = handle_missing_values(df)
     df = sort_by_unit_and_cycle(df)
 
@@ -354,10 +366,18 @@ def preprocess_dataset(
             )
         with open(constant_columns_path) as f:
             constant_columns = json.load(f)
-        rul_df = load_data(rul_path) if rul_path.suffix == ".csv" else pd.read_csv(rul_path, sep=r"\s+", header=None, names=["RUL"])
+        rul_df = (
+            load_data(rul_path)
+            if rul_path.suffix == ".csv"
+            else pd.read_csv(rul_path, sep=r"\s+", header=None, names=["RUL"])
+        )
 
     df_preprocessed, constant_columns = preprocess_data(
-        df, is_train=is_train, constant_columns=constant_columns, rul_df=rul_df, rul_cap=rul_cap,
+        df,
+        is_train=is_train,
+        constant_columns=constant_columns,
+        rul_df=rul_df,
+        rul_cap=rul_cap,
     )
 
     save_dataframe(df_preprocessed, output_path, file_format="csv", index=False)

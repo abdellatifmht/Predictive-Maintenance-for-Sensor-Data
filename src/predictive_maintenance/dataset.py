@@ -1,28 +1,23 @@
+"""Import the bundled NASA C-MAPSS FD001 text files."""
+
 from pathlib import Path
 
-from loguru import logger
-from tqdm import tqdm
 import typer
 
-from src.predictive_maintenance_for_sensor_data.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
+from predictive_maintenance.config import EXTERNAL_DATA_DIR, RAW_DATA_DIR
+from predictive_maintenance.data.ingestion import ingest_dataset
 
 app = typer.Typer()
 
 
 @app.command()
-def main(
-    # ---- REPLACE DEFAULT PATHS AS APPROPRIATE ----
-    input_path: Path = RAW_DATA_DIR / "dataset.csv",
-    output_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
-    # ----------------------------------------------
-):
-    # ---- REPLACE THIS WITH YOUR OWN CODE ----
-    logger.info("Processing dataset...")
-    for i in tqdm(range(10), total=10):
-        if i == 5:
-            logger.info("Something happened for iteration 5.")
-    logger.success("Processing dataset complete.")
-    # -----------------------------------------
+def main(input_dir: Path = EXTERNAL_DATA_DIR, output_dir: Path = RAW_DATA_DIR) -> None:
+    ingest_dataset(
+        input_dir / "train_FD001.txt",
+        input_dir / "test_FD001.txt",
+        input_dir / "RUL_FD001.txt",
+        output_dir,
+    )
 
 
 if __name__ == "__main__":

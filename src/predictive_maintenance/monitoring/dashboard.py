@@ -1,14 +1,10 @@
 import json
-import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from predictive_maintenance.config import RESULTS_DIR
 from predictive_maintenance.monitoring.drift import (
@@ -33,7 +29,10 @@ def load_logs() -> pd.DataFrame:
         for line in f:
             line = line.strip()
             if line:
-                rows.append(json.loads(line))
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue  # A writer may still be appending the final line.
 
     if not rows:
         return pd.DataFrame()
@@ -67,15 +66,19 @@ if df.empty:
     st.stop()
 
 if reference is None:
-    st.error("Profil de référence introuvable. Lance `make monitoring-reference` avant de continuer.")
+    st.error(
+        "Profil de référence introuvable. Lance `make monitoring-reference` avant de continuer."
+    )
     st.stop()
 
 FEATURES = list(reference["features"].keys())
 
 st.sidebar.header("Paramètres")
 window_size = st.sidebar.slider(
-    "Taille de la fenêtre de drift (dernières N requêtes)", min_value=10, max_value=max(len(df), 20),
-    value=min(50, len(df)),
+    "Taille de la fenêtre de drift (dernières N requêtes)",
+    min_value=10,
+    max_value=max(len(df), 20),
+    value=max(10, min(50, len(df))),
 )
 st.sidebar.metric("Requêtes totales reçues", len(df))
 st.sidebar.metric("Requêtes en erreur", int((df["status"] != "ok").sum()))
@@ -102,11 +105,19 @@ if any_drift:
 elif n_warning > 0:
     st.warning(f"⚠️ {n_warning} capteur(s) en zone de surveillance.")
 else:
-    st.success("✅ Aucun drift détecté — distributions stables par rapport à la référence (train).")
+    st.success(
+        "✅ Aucun drift détecté — distributions stables par rapport à la référence (train)."
+    )
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("RUL moyenne prédite (fenêtre)", f"{current_window['predicted_rul'].mean():.1f}" if "predicted_rul" in current_window else "NA")
-col2.metric("Latence moyenne (ms)", f"{current_window['latency_ms'].mean():.1f}" if "latency_ms" in current_window else "NA")
+col1.metric(
+    "RUL moyenne prédite (fenêtre)",
+    f"{current_window['predicted_rul'].mean():.1f}" if "predicted_rul" in current_window else "NA",
+)
+col2.metric(
+    "Latence moyenne (ms)",
+    f"{current_window['latency_ms'].mean():.1f}" if "latency_ms" in current_window else "NA",
+)
 col3.metric("Capteurs en alerte", n_alert)
 col4.metric("Capteurs en surveillance", n_warning)
 
@@ -114,12 +125,18 @@ st.subheader("Distribution des prédictions dans le temps")
 tab1, tab2 = st.tabs(["RUL prédite", "Classe de santé"])
 
 with tab1:
-    fig = px.scatter(
-        df, x="timestamp", y="predicted_rul", color="drift_injected",
-        color_discrete_map={True: "red", False: "steelblue"},
-        title="RUL prédite au fil du temps (rouge = drift injecté volontairement, pour test)",
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    if "predicted_rul" in df.columns:
+        fig = px.scatter(
+            df,
+            x="timestamp",
+            y="predicted_rul",
+            color="drift_injected",
+            color_discrete_map={True: "red", False: "steelblue"},
+            title="Predicted RUL over time (red = simulated drift)",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No successful predictions yet. Check API health and simulator errors.")
 
 with tab2:
     if "predicted_class" in df.columns:
@@ -130,28 +147,43 @@ with tab2:
             .reset_index(name="count")
         )
         fig = px.bar(
-            class_counts, x="timestamp", y="count", color="predicted_class",
-            color_discrete_map={"healthy": "#2ca02c", "anomaly": "#ff7f0e", "imminent_failure": "#d62728"},
+            class_counts,
+            x="timestamp",
+            y="count",
+            color="predicted_class",
+            color_discrete_map={
+                "healthy": "#2ca02c",
+                "anomaly": "#ff7f0e",
+                "imminent_failure": "#d62728",
+            },
             title="Répartition healthy / anomaly / imminent_failure par minute",
         )
         st.plotly_chart(fig, use_container_width=True)
 
-st.subheader(f"Drift par capteur (fenêtre des {window_size} dernières requêtes vs référence train)")
+st.subheader(
+    f"Drift par capteur (fenêtre des {window_size} dernières requêtes vs référence train)"
+)
 
-drift_table = pd.DataFrame([
-    {
-        "Capteur": r.feature,
-        "PSI": round(r.psi, 3),
-        "Niveau PSI": r.psi_level,
-        "KS p-value": round(r.ks_pvalue, 4),
-        "Drift détecté": "🚨 oui" if r.is_drifted else "—",
-    }
-    for r in sorted(drift_results, key=lambda r: r.psi, reverse=True)
-])
+drift_table = pd.DataFrame(
+    [
+        {
+            "Capteur": r.feature,
+            "PSI": round(r.psi, 3),
+            "Niveau PSI": r.psi_level,
+            "KS p-value": round(r.ks_pvalue, 4),
+            "Drift détecté": "🚨 oui" if r.is_drifted else "—",
+        }
+        for r in sorted(drift_results, key=lambda r: r.psi, reverse=True)
+    ]
+)
 
 
 def highlight_level(row):
-    color = {"alert": "background-color: #ffcccc", "warning": "background-color: #fff3cd", "ok": ""}
+    color = {
+        "alert": "background-color: #ffcccc",
+        "warning": "background-color: #fff3cd",
+        "ok": "",
+    }
     return [color.get(row["Niveau PSI"], "")] * len(row)
 
 
@@ -161,11 +193,23 @@ st.subheader("Comparaison de distribution — référence (train) vs fenêtre co
 selected_feature = st.selectbox("Capteur à inspecter", FEATURES)
 
 ref_values = reference["features"][selected_feature]["values"]
-cur_values = current_df[selected_feature].dropna().tolist() if selected_feature in current_df.columns else []
+cur_values = (
+    current_df[selected_feature].dropna().tolist()
+    if selected_feature in current_df.columns
+    else []
+)
 
 fig = go.Figure()
-fig.add_trace(go.Histogram(x=ref_values, name="Référence (train)", opacity=0.6, histnorm="probability density"))
-fig.add_trace(go.Histogram(x=cur_values, name="Fenêtre courante", opacity=0.6, histnorm="probability density"))
+fig.add_trace(
+    go.Histogram(
+        x=ref_values, name="Référence (train)", opacity=0.6, histnorm="probability density"
+    )
+)
+fig.add_trace(
+    go.Histogram(
+        x=cur_values, name="Fenêtre courante", opacity=0.6, histnorm="probability density"
+    )
+)
 fig.update_layout(barmode="overlay", title=f"Distribution — {selected_feature}")
 st.plotly_chart(fig, use_container_width=True)
 
@@ -175,7 +219,9 @@ if len(df) >= 20:
     rolling_psi = []
     step = 10
     for end in range(20, len(df) + 1, step):
-        window_df = df.iloc[max(0, end - 20):end].rename(columns={f"reading_{f}": f for f in FEATURES})
+        window_df = df.iloc[max(0, end - 20) : end].rename(
+            columns={f"reading_{f}": f for f in FEATURES}
+        )
         psis = []
         for feature in FEATURES:
             if feature in window_df.columns and window_df[feature].notna().any():
@@ -185,9 +231,21 @@ if len(df) >= 20:
         rolling_psi.append({"n_requetes": end, "psi_moyen": np.mean(psis) if psis else 0})
 
     rolling_df = pd.DataFrame(rolling_psi)
-    fig = px.line(rolling_df, x="n_requetes", y="psi_moyen", title="PSI moyen (tous capteurs) au fil du temps")
-    fig.add_hline(y=PSI_THRESHOLD_ALERT, line_dash="dash", line_color="red", annotation_text="seuil d'alerte")
-    fig.add_hline(y=PSI_THRESHOLD_WARNING, line_dash="dot", line_color="orange", annotation_text="seuil de surveillance")
+    fig = px.line(
+        rolling_df,
+        x="n_requetes",
+        y="psi_moyen",
+        title="PSI moyen (tous capteurs) au fil du temps",
+    )
+    fig.add_hline(
+        y=PSI_THRESHOLD_ALERT, line_dash="dash", line_color="red", annotation_text="seuil d'alerte"
+    )
+    fig.add_hline(
+        y=PSI_THRESHOLD_WARNING,
+        line_dash="dot",
+        line_color="orange",
+        annotation_text="seuil de surveillance",
+    )
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Pas assez de requêtes encore pour tracer l'historique de drift (minimum 20).")

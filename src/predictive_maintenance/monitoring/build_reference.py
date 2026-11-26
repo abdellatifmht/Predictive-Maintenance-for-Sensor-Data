@@ -1,8 +1,9 @@
 import json
+from pathlib import Path
 
+from loguru import logger
 import pandas as pd
 import typer
-from loguru import logger
 
 from predictive_maintenance.config import INTERIM_DATA_DIR, RESULTS_DIR
 
@@ -14,7 +15,9 @@ REFERENCE_PATH = MONITORING_DIR / "reference_profile.json"
 
 def build_reference(train_preprocessed_path, output_path) -> None:
     if not train_preprocessed_path.exists():
-        raise FileNotFoundError(f"{train_preprocessed_path} introuvable — lance `make train` d'abord.")
+        raise FileNotFoundError(
+            f"{train_preprocessed_path} introuvable — lance `make train` d'abord."
+        )
 
     train_df = pd.read_csv(train_preprocessed_path)
     sensor_columns = [col for col in train_df.columns if col.startswith("sensor")]
@@ -42,8 +45,8 @@ def build_reference(train_preprocessed_path, output_path) -> None:
 
 @app.command()
 def main(
-    train_preprocessed_path=INTERIM_DATA_DIR / "train_preprocessed.csv",
-    output_path=REFERENCE_PATH,
+    train_preprocessed_path: Path = INTERIM_DATA_DIR / "train_preprocessed.csv",
+    output_path: Path = REFERENCE_PATH,
 ) -> None:
     build_reference(train_preprocessed_path, output_path)
 

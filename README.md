@@ -1,89 +1,98 @@
-# Predictive-Maintenance-for-Sensor-Data
+# Predictive Maintenance for Sensor Data
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
+Estimate turbofan engine remaining useful life (RUL) from NASA C-MAPSS FD001 sensor histories. The project includes a reproducible training pipeline, a FastAPI prediction service, and a Streamlit drift dashboard.
 
-A short description of the project.
+## Quick start
 
-## Project Organization
+Requires Python 3.10-3.13 and [uv](https://docs.astral.sh/uv/). Run from this repository's root; the three FD001 input files are already in `data/external/`.
 
-```
-predictive-maintenance/
-│
-├── README.md
-├── LICENSE
-├── Makefile
-├── pyproject.toml
-├── .gitignore
-├── .env.example
-│
-├── data/
-│   ├── raw/                  # Données originales, jamais modifiées
-│   ├── external/             # Données externes
-│   ├── interim/              # Données après transformations intermédiaires
-│   └── processed/            # Dataset final pour le ML
-│
-├── notebooks/
-│   ├── 01_eda.ipynb
-│   ├── 02_data_cleaning.ipynb
-│   ├── 03_feature_engineering.ipynb
-│   └── 04_model_evaluation.ipynb
-│
-├── models/
-│   ├── baseline/
-│   ├── production/
-│   └── metadata/
-│
-├── reports/
-│   ├── figures/
-│   └── results/
-│
-├── docs/
-│
-├── references/
-│   └── data_dictionary.md
-│
-├── src/
-│   └── predictive_maintenance/
-│       ├── __init__.py
-│       │
-│       ├── config.py
-│       │
-│       ├── data/
-│       │   ├── __init__.py
-│       │   ├── ingestion.py
-│       │   ├── validation.py
-│       │   └── preprocessing.py
-│       │
-│       ├── features/
-│       │   ├── __init__.py
-│       │   └── engineering.py
-│       │
-│       ├── models/
-│       │   ├── __init__.py
-│       │   ├── train.py
-│       │   ├── predict.py
-│       │   └── evaluate.py
-│       │
-│       ├── visualization/
-│       │   ├── __init__.py
-│       │   └── plots.py
-│       │
-│       └── utils/
-│           ├── __init__.py
-│           └── helpers.py
-│
-├── tests/
-│   ├── __init__.py
-│   ├── test_data.py
-│   ├── test_features.py
-│   └── test_models.py
-│
-└── configs/
-    ├── base.yaml
-    └── model.yaml
+```sh
+uv sync --locked
+uv run pm-train
+uv run python -m uvicorn predictive_maintenance.api.main:app --port 8000
 ```
 
---------
+Open `http://localhost:8000/docs` for the interactive API. `GET /health` reports the selected model, evaluation metrics, and required history length. Before training, health and prediction requests return 503.
 
+The default pipeline trains linear regression, XGBoost, and LightGBM. It imports the text files, validates and preprocesses them, builds causal sensor trends, runs five-fold cross-validation grouped by engine, saves all estimators, generates test predictions, and evaluates the final cycle of each test engine. It writes artifacts under `models/`, `data/processed/`, and `results/`.
+
+Without uv, create and activate a virtual environment, run `python -m pip install -e .`, then run `python -m predictive_maintenance.pipeline`. Set `PM_PROJECT_ROOT` to the absolute workspace directory when running an installed package outside the repository.
+
+## Predictions
+
+Send `POST /predict` with one engine's consecutive readings in chronological order. Each reading contains `os_1`, `os_2`, and the retained sensors. The full schema is available in `/docs`; constant FD001 sensors are optional. `unit_id` is accepted as an alias for `unit`.
+
+Generate a real request from the bundled data in a separate terminal after training:
+
+```sh
+uv run python examples/predict_engine.py --unit 1
+```
+
+The API needs at least 10 readings with the default trend window. Send the full available history or the last 10 consecutive readings. RUL is returned as a non-negative number of cycles, rounded to two decimals. Health classes are derived from RUL: `imminent_failure` at 10 cycles or below, `anomaly` above 10 through 30, and `healthy` above 30. These are heuristic labels, not a separately trained fault classifier.
+
+Batch prediction and evaluation can also be rerun:
+
+```sh
+uv run pm-predict
+uv run pm-evaluate
+```
+
+Every command supports `--help`. `pm-data` only imports the raw files. `pm-train --n-splits 3` changes the number of engine folds. Base settings live in `configs/base.yaml`; estimator parameters and seeds live in `configs/model.yaml`. The serving manifest records the feature window used during training, so later configuration edits do not alter a saved model's input transformation.
+
+## Evaluation and model selection
+
+The serving model is selected by mean validation RMSE from GroupKFold on training engines. Test metrics do not determine selection. Consequently, the selected model may differ from the lowest test RMSE in `results/test_evaluation.csv`.
+
+- `groupkfold_results.csv`: MAE/RMSE for each training validation fold, across all validation cycles.
+- `model_comparison.csv`: mean and standard deviation across folds.
+- `test_evaluation.csv`: final-cycle MAE/RMSE for each trained model on the 100 test engines.
+- `evaluation.csv`: final-cycle MAE, RMSE, R2 and PHM08 score for the serving model.
+- `evaluation_by_unit.csv`: final-cycle error per engine.
+
+RUL targets are capped at 125 cycles by default on both training and test data. Test targets use the supplied ground-truth RUL at the last observed cycle; they are not inferred from a truncated trajectory's end. Reported metrics use these capped targets. Features exclude engine identifiers, cycle numbers, and labels. Missing values are forward-filled within each engine; missing initial observations are rejected to avoid using future information.
+
+## Optional LSTM experiment
+
+```sh
+uv sync --locked --extra deep-learning
+uv run pm-train --train-lstm
+```
+
+The PyTorch LSTM uses causal windows, train-only scaling, a separate engine validation split, and the best validation epoch. Its held-out test metrics are included as an experiment. The serving champion is selected from the three classical models with comparable GroupKFold results; LSTM is not automatically promoted without equivalent model-selection validation. Core training and serving do not require PyTorch.
+
+## Monitoring
+
+```sh
+uv sync --locked --extra monitoring
+uv run pm-reference
+# Keep the API running in another terminal.
+uv run pm-stream --rate 2
+uv run python -m streamlit run src/predictive_maintenance/monitoring/dashboard.py
+```
+
+Use `pm-stream --inject-drift --drift-after 50` to exercise alerts. The simulator records request results, latency, and final sensor readings in `results/monitoring/logs/predictions.jsonl`. The dashboard compares them with training sensor distributions using PSI and the two-sample KS test. This is a diagnostic demo: differences in lifecycle sampling can also cause alerts, and no ground-truth online performance or automatic retraining is provided. Requests from other clients are not logged by this simulator.
+
+## Docker
+
+Train first, then mount the generated models into the API container:
+
+```sh
+docker build -t predictive-maintenance-api .
+docker run --rm -p 8000:8000 --mount "type=bind,source=/absolute/path/to/models,target=/app/models,readonly" predictive-maintenance-api
+```
+
+Replace the source with the absolute path of this repository's `models` directory (a Windows path is valid with Docker Desktop). The image installs the application and OpenMP runtime, runs as a non-root user, and checks `/health`. It serves classical artifacts; PyTorch is an optional host-side experiment.
+
+## Development
+
+```sh
+uv sync --locked --extra docs
+uv run pytest
+uv run ruff check src tests
+uv run ruff format --check src tests
+uv run mkdocs build --strict -f docs/mkdocs.yml
+```
+
+CI checks Python 3.10 and 3.13. Tests cover target construction, causality, schema alignment, engine separation, artifact round trips, model selection, API behavior, drift detection, and a complete small training run. Optional dashboard and LSTM tests run when their dependencies are installed. Notebooks 03-05 call the maintained feature, training, and evaluation functions; the earlier notebooks and original analysis notebooks remain exploratory material.
+
+See [the project audit](docs/project-audit.md) for the completion changes and validation status. Local model and data outputs are regenerated rather than committed. Only load model files generated by this project from a trusted source.

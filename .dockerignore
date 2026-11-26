@@ -1,0 +1,14 @@
+.git
+.venv
+.uv-cache
+__pycache__
+.pytest_cache
+.ruff_cache
+.env
+data
+models
+results
+reports
+notebooks
+*.ipynb
+docs/site

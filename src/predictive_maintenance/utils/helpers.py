@@ -1,13 +1,11 @@
 from pathlib import Path
+
 from loguru import logger
 import pandas as pd
 
 
 def save_dataframe(
-    df: pd.DataFrame,
-    file_path: Path,
-    file_format: str = "csv",
-    index: bool = False
+    df: pd.DataFrame, file_path: Path, file_format: str = "csv", index: bool = False
 ) -> None:
     """
     Save a DataFrame to a specified file format.
@@ -31,10 +29,7 @@ def save_dataframe(
         raise ValueError(f"Unsupported file format: {file_format}. Use 'csv' or 'parquet'.")
 
 
-def load_dataframe(
-    file_path: Path, 
-    file_format: str = "csv"
-) -> pd.DataFrame:
+def load_dataframe(file_path: Path, file_format: str = "csv") -> pd.DataFrame:
     """
     Load a DataFrame from a specified file format.
 
@@ -60,10 +55,7 @@ def load_dataframe(
         raise ValueError(f"Unsupported file format: {file_format}. Use 'csv' or 'parquet'.")
 
 
-def validate_required_columns(
-        df: pd.DataFrame, 
-        required_columns: list[str]
-):
+def validate_required_columns(df: pd.DataFrame, required_columns: list[str]):
     """
     Validate that the required columns are present in the DataFrame.
 

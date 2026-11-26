@@ -1,10 +1,7 @@
-# Predictive-Maintenance-for-Sensor-Data documentation!
+# Predictive Maintenance
 
-## Description
+This project trains and serves remaining useful life models for the bundled NASA C-MAPSS FD001 engine data.
 
-A short description of the project.
+The reproducible workflow is ingestion, causal preprocessing, sensor trend features, engine-grouped cross-validation, artifact generation, test prediction, and final-cycle evaluation. The FastAPI service shares training feature code and model artifacts. An optional Streamlit dashboard demonstrates distribution drift diagnostics.
 
-## Commands
-
-The Makefile contains the central entry points for common tasks related to this project.
-
+Start with the [setup guide](getting-started.md), then inspect the [API and evaluation contract](workflow.md).

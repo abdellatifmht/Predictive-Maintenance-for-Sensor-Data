@@ -1,12 +1,11 @@
-Generating the docs
-----------
+# Documentation
 
-Use [mkdocs](http://www.mkdocs.org/) structure to update the documentation. 
+From the repository root, install the docs extra and build with the project configuration:
 
-Build locally with:
+```sh
+uv sync --locked --extra docs
+uv run mkdocs build --strict -f docs/mkdocs.yml
+uv run mkdocs serve -f docs/mkdocs.yml
+```
 
-    mkdocs build
-
-Serve locally with:
-
-    mkdocs serve
+Edit the pages under `docs/docs/`. The completion audit is in `docs/project-audit.md`.

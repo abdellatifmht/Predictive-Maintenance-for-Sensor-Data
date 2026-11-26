@@ -1,4 +1,6 @@
-site_name: Predictive-Maintenance-for-Sensor-Data
-# 
+site_name: Predictive Maintenance for Sensor Data
 site_author: Abdellatif Mahamat Dougouye
-# 
+nav:
+  - Overview: index.md
+  - Getting started: getting-started.md
+  - Workflow and API: workflow.md

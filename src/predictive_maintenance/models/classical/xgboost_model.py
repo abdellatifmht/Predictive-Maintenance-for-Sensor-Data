@@ -8,15 +8,16 @@ class XGBoostModel(BaseModel):
     """XGBoost model for RUL prediction."""
 
     def __init__(
-            self,
-            n_estimators: int = 500,
-            learning_rate: float = 0.05,
-            max_depth: int = 6,
-            min_child_weight: int = 3,
-            subsample: float = 0.8,
-            colsample_bytree: float = 0.8,
-            random_state: int = 42,
-            ):
+        self,
+        n_estimators: int = 500,
+        learning_rate: float = 0.05,
+        max_depth: int = 6,
+        min_child_weight: int = 3,
+        subsample: float = 0.8,
+        colsample_bytree: float = 0.8,
+        random_state: int = 42,
+        n_jobs: int = 4,
+    ):
         super().__init__(name="XGBoost")
         self.model = XGBRegressor(
             n_estimators=n_estimators,
@@ -25,16 +26,12 @@ class XGBoostModel(BaseModel):
             min_child_weight=min_child_weight,
             subsample=subsample,
             colsample_bytree=colsample_bytree,
-            objective='reg:squarederror',
+            objective="reg:squarederror",
             random_state=random_state,
-            n_jobs=-1,
+            n_jobs=n_jobs,
         )
 
-    def fit(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series
-    ) -> None:
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> None:
         """Train the XGBoost model on the given data."""
         self.model.fit(X, y)
 

@@ -1,21 +1,27 @@
-from pathlib import Path
 import json
+from pathlib import Path
+from typing import TYPE_CHECKING
 
+from loguru import logger
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from loguru import logger
 from sklearn.model_selection import GroupKFold
 
 from predictive_maintenance.config import (
+    MODEL_SETTINGS,
     MODELS_DIR,
     RESULTS_DIR,
+    RUL_CAP,
+    TREND_WINDOW,
 )
 from predictive_maintenance.models import (
+    LightGBMModel,
     LinearRegressionModel,
     XGBoostModel,
-    LightGBMModel,
-    LSTMModel,
 )
+
+if TYPE_CHECKING:
+    from predictive_maintenance.models.deep_learning.lstm import LSTMModel
 
 
 N_SPLITS = 5
@@ -39,6 +45,14 @@ def load_data(features_path: Path, labels_path: Path) -> tuple[pd.DataFrame, pd.
 
     if len(features) != len(labels):
         raise ValueError("Features and labels have different sizes")
+    if features.empty:
+        raise ValueError("Training dataset is empty")
+    if not all(col in labels.columns for col in ID_COLUMNS):
+        raise ValueError("Labels must contain unit and cycle identifiers")
+    if not features[ID_COLUMNS].equals(labels[ID_COLUMNS]):
+        raise ValueError("Features and labels are not aligned by unit/cycle")
+    if TARGET in features.columns:
+        raise ValueError("Target leakage: RUL must not be a feature")
 
     if features.isna().sum().sum() > 0:
         raise ValueError("Features contain NaN values")
@@ -85,12 +99,14 @@ def get_models() -> list[object]:
     """
     return [
         LinearRegressionModel(),
-        XGBoostModel(),
-        LightGBMModel(),
+        XGBoostModel(**MODEL_SETTINGS.get("xgboost", {})),
+        LightGBMModel(**MODEL_SETTINGS.get("lightgbm", {})),
     ]
 
 
-def train_models(X_train: pd.DataFrame, y_train: pd.Series, X_val: pd.DataFrame, y_val: pd.Series, fold: int) -> list[dict]:
+def train_models(
+    X_train: pd.DataFrame, y_train: pd.Series, X_val: pd.DataFrame, y_val: pd.Series, fold: int
+) -> list[dict]:
     """
     Train multiple models on the training data and evaluate them on the validation data.
     """
@@ -103,16 +119,16 @@ def train_models(X_train: pd.DataFrame, y_train: pd.Series, X_val: pd.DataFrame,
         metrics = evaluate(model, X_val, y_val)
 
         logger.success(
-            f"Fold {fold} | {model.name} | "
-            f"MAE={metrics['MAE']:.2f} | "
-            f"RMSE={metrics['RMSE']:.2f}"
+            f"Fold {fold} | {model.name} | MAE={metrics['MAE']:.2f} | RMSE={metrics['RMSE']:.2f}"
         )
 
-        results.append({
-            "fold": fold,
-            "model": model.name,
-            **metrics,
-        })
+        results.append(
+            {
+                "fold": fold,
+                "model": model.name,
+                **metrics,
+            }
+        )
 
     return results
 
@@ -126,10 +142,7 @@ def cross_validate(features: pd.DataFrame, y: pd.Series, n_splits: int = 5) -> l
 
     results = []
 
-    for fold, (train_idx, val_idx) in enumerate(
-        gkf.split(features, y, groups),
-        start=1
-    ):
+    for fold, (train_idx, val_idx) in enumerate(gkf.split(features, y, groups), start=1):
         train = features.iloc[train_idx]
         val = features.iloc[val_idx]
 
@@ -222,10 +235,12 @@ def train_final_models(X: pd.DataFrame, y: pd.Series) -> dict:
                 ".pkl",
                 "_feature_importance.csv",
             )
-            pd.DataFrame({
-                "feature": X.columns.tolist(),
-                "importance": model.model.feature_importances_,
-            }).to_csv(feature_importance_file, index=False)
+            pd.DataFrame(
+                {
+                    "feature": X.columns.tolist(),
+                    "importance": model.model.feature_importances_,
+                }
+            ).to_csv(feature_importance_file, index=False)
 
         with open(feature_file, "w") as f:
             json.dump(X.columns.tolist(), f)
@@ -235,7 +250,9 @@ def train_final_models(X: pd.DataFrame, y: pd.Series) -> dict:
     return models
 
 
-def train_final_lstm(features: pd.DataFrame, y: pd.Series, val_fraction: float = 0.2) -> LSTMModel:
+def train_final_lstm(
+    features: pd.DataFrame, y: pd.Series, val_fraction: float = 0.2
+) -> "LSTMModel":
     """
     Train the final LSTM on the (train) dataset given, with a held-out slice
     of ENGINES (never rows) used for validation / early stopping.
@@ -244,14 +261,18 @@ def train_final_lstm(features: pd.DataFrame, y: pd.Series, val_fraction: float =
     entraîner sur le test annulerait l'évaluation qui suit (le modèle aurait
     déjà vu les données sur lesquelles on prétend le juger).
     """
+    from predictive_maintenance.models.deep_learning.lstm import LSTMModel
+
     units = sorted(features["unit"].unique())
-    val_units = set(units[-max(1, int(len(units) * val_fraction)):])
+    if len(units) < 2:
+        raise ValueError("LSTM training needs at least two engines for validation")
+    val_units = set(units[-max(1, int(len(units) * val_fraction)) :])
     train_mask = ~features["unit"].isin(val_units)
     val_mask = features["unit"].isin(val_units)
 
     logger.success("Training LSTM...")
 
-    model = LSTMModel()
+    model = LSTMModel(**MODEL_SETTINGS.get("lstm", {}))
     # attention : features complet (avec unit/cycle), PAS prepare_data(features)
     model.fit(features[train_mask], y[train_mask], features[val_mask], y[val_mask])
     model.save(MODELS_DIR / "lstm")
@@ -263,11 +284,7 @@ def get_last_cycle(df: pd.DataFrame) -> pd.DataFrame:
     """
     Get the last cycle for each unit in the DataFrame.
     """
-    return (
-        df.loc[df.groupby("unit")["cycle"].idxmax()]
-        .sort_values("unit")
-        .reset_index(drop=True)
-    )
+    return df.loc[df.groupby("unit")["cycle"].idxmax()].sort_values("unit").reset_index(drop=True)
 
 
 def evaluate_test(models: dict, test_features: pd.DataFrame, test_y: pd.Series) -> list[dict]:
@@ -275,11 +292,13 @@ def evaluate_test(models: dict, test_features: pd.DataFrame, test_y: pd.Series) 
     Evaluate the trained models on the test dataset and return the results.
     """
     # Create a DataFrame with unit, cycle, and RUL for evaluation
-    labels = pd.DataFrame({
-        "unit": test_features["unit"],
-        "cycle": test_features["cycle"],
-        "RUL": test_y,
-    })
+    labels = pd.DataFrame(
+        {
+            "unit": test_features["unit"],
+            "cycle": test_features["cycle"],
+            "RUL": test_y,
+        }
+    )
     labels = get_last_cycle(labels)
     y_true = labels["RUL"].values
 
@@ -299,26 +318,22 @@ def evaluate_test(models: dict, test_features: pd.DataFrame, test_y: pd.Series) 
         mae = mean_absolute_error(y_true, pred)
         rmse = mean_squared_error(y_true, pred) ** 0.5
 
-        logger.success(
-            f"{name} | "
-            f"MAE={mae:.2f} | "
-            f"RMSE={rmse:.2f}"
-        )
+        logger.success(f"{name} | MAE={mae:.2f} | RMSE={rmse:.2f}")
 
-        results.append({
-            "model": name,
-            "MAE": mae,
-            "RMSE": rmse,
-            "n_engines": len(y_true),
-        })
+        results.append(
+            {
+                "model": name,
+                "MAE": mae,
+                "RMSE": rmse,
+                "n_engines": len(y_true),
+            }
+        )
 
     return results
 
 
-def save_best_model(results: list[dict]) -> dict:
-    """
-    Save the best model based on RMSE to a JSON file.
-    """
+def save_best_model(results: list[dict], cv_results: list[dict]) -> dict:
+    """Persist the CV-selected serving model and report held-out test scores."""
     df = pd.DataFrame(results)
     df = df.sort_values("RMSE")
 
@@ -329,40 +344,32 @@ def save_best_model(results: list[dict]) -> dict:
         index=False,
     )
 
-    best = df.iloc[0]
-    name = best["model"]
+    # The test set is reporting-only. Choose the serving model from training CV.
+    cv_summary = pd.DataFrame(cv_results).groupby("model")["RMSE"].mean()
+    name = cv_summary.idxmin()
+    best = df.loc[df["model"] == name].iloc[0]
 
-    # Le LSTM n'a pas d'entrée dans MODEL_FILES (format de sauvegarde
-    # différent : un seul .pt contenant poids + scaler + colonnes de
-    # features, pas de .pkl + _features.json séparés) -- cas traité à part
-    # pour ne pas planter avec un KeyError si le LSTM s'avère être le
-    # meilleur modèle.
-    if name == "LSTM":
-        files = {"weights": "lstm.pt"}
-    else:
-        filename = MODEL_FILES[name]
-        files = {
-            "model": filename,
-            "features": filename.replace(
-                ".pkl",
-                "_features.json",
-            ),
-        }
+    filename = MODEL_FILES[name]
+    files = {
+        "model": filename,
+        "features": filename.replace(".pkl", "_features.json"),
+    }
 
     info = {
         "model_name": name,
         "test_RMSE": float(best["RMSE"]),
         "test_MAE": float(best["MAE"]),
         "files": files,
+        "selection_metric": "groupkfold_RMSE",
+        "validation_RMSE": float(cv_summary[name]),
+        "preprocessing": {"trend_window": TREND_WINDOW, "rul_cap": RUL_CAP},
     }
 
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
     with open(MODELS_DIR / "best_model.json", "w") as f:
         json.dump(info, f, indent=2)
 
-    logger.success(
-        f"\nBest model: {name} "
-        f"(RMSE={best['RMSE']:.2f})"
-    )
+    logger.success(f"\nBest model: {name} (RMSE={best['RMSE']:.2f})")
 
     return info
 
@@ -373,7 +380,15 @@ def train_pipeline(
     test_features_path: Path | None = None,
     test_labels_path: Path | None = None,
     n_splits: int = N_SPLITS,
+    train_lstm: bool = False,
 ):
+    if (test_features_path is None) != (test_labels_path is None):
+        raise ValueError("Test features and labels must be provided together")
+    if train_lstm:
+        try:
+            import torch  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError("Install the deep-learning extra to train LSTM") from exc
     # Load data
     features, y = load_data(
         features_path,
@@ -401,24 +416,22 @@ def train_pipeline(
     # unit/cycle -- surtout pas `X`, qui les a déjà supprimés), puis ajouté
     # au même dict que les autres modèles pour que evaluate_test les traite
     # tous ensemble.
-    lstm_model = train_final_lstm(features, y)
-    models["LSTM"] = lstm_model
-
+    if train_lstm:
+        models["LSTM"] = train_final_lstm(features, y)
 
     # 4. Official evaluation
     if test_features_path and test_labels_path:
-
         test_features, test_y = load_data(
             test_features_path,
             test_labels_path,
         )
 
-        results = evaluate_test(
+        test_results = evaluate_test(
             models,
             test_features,
             test_y,
         )
 
-        save_best_model(results)
+        save_best_model(test_results, results)
 
     logger.success("\nTraining completed.")

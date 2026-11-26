@@ -1,11 +1,11 @@
+from datetime import datetime, timezone
 import json
 import time
-from datetime import datetime, timezone
 
+from loguru import logger
 import pandas as pd
 import requests
 import typer
-from loguru import logger
 
 from predictive_maintenance.config import RAW_DATA_DIR, RESULTS_DIR
 
@@ -36,6 +36,8 @@ def main(
     drift_severity: float = 3.0,
     loop: bool = False,
 ) -> None:
+    if rate <= 0:
+        raise typer.BadParameter("rate must be positive")
     test_raw = pd.read_csv(RAW_DATA_DIR / "test_data.csv")
     windows = build_windows(test_raw)
     logger.info(f"{len(windows)} moteurs de test chargés, envoi à {rate} req/s vers {api_url}")
@@ -48,7 +50,7 @@ def main(
             drift_active = inject_drift_flag and n_sent >= drift_after
             payload_readings = inject_drift(readings, drift_severity) if drift_active else readings
 
-            payload = {"unit_id": f"engine_{unit_id:03d}", "readings": payload_readings}
+            payload = {"unit": f"engine_{unit_id:03d}", "readings": payload_readings}
 
             try:
                 response = requests.post(api_url, json=payload, timeout=10)
@@ -61,7 +63,7 @@ def main(
 
             log_entry = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "unit_id": payload["unit_id"],
+                "unit_id": payload["unit"],
                 "status": status,
                 "drift_injected": drift_active,
                 "last_reading": payload_readings[-1] if payload_readings else None,
@@ -74,7 +76,7 @@ def main(
             n_sent += 1
             flag = " [DRIFT INJECTÉ]" if drift_active else ""
             logger.info(
-                f"[{n_sent}] {payload['unit_id']} -> {status}{flag} "
+                f"[{n_sent}] {payload['unit']} -> {status}{flag} "
                 f"(RUL={result.get('predicted_rul', 'NA')}, classe={result.get('predicted_class', 'NA')})"
             )
 

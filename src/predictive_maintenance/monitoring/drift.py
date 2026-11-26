@@ -33,15 +33,28 @@ class DriftResult:
 
 
 def _psi_bins(reference: np.ndarray, n_bins: int = 10) -> np.ndarray:
+    if np.ptp(reference) == 0:
+        value = reference[0]
+        return np.array(
+            [-np.inf, np.nextafter(value, -np.inf), np.nextafter(value, np.inf), np.inf]
+        )
     quantiles = np.linspace(0, 1, n_bins + 1)
     edges = np.quantile(reference, quantiles)
     edges[0], edges[-1] = -np.inf, np.inf
     return np.unique(edges)
 
 
-def population_stability_index(reference: np.ndarray, current: np.ndarray, n_bins: int = 10, epsilon: float = 1e-4) -> float:
+def population_stability_index(
+    reference: np.ndarray, current: np.ndarray, n_bins: int = 10, epsilon: float = 1e-4
+) -> float:
     reference = np.asarray(reference, dtype=float)
     current = np.asarray(current, dtype=float)
+    if n_bins < 2 or epsilon <= 0:
+        raise ValueError("n_bins must be at least 2 and epsilon must be positive")
+    if reference.size == 0 or current.size == 0:
+        raise ValueError("Drift comparison requires non-empty samples")
+    if not np.isfinite(reference).all() or not np.isfinite(current).all():
+        raise ValueError("Drift samples must contain only finite values")
 
     edges = _psi_bins(reference, n_bins)
     ref_counts, _ = np.histogram(reference, bins=edges)
@@ -56,13 +69,20 @@ def population_stability_index(reference: np.ndarray, current: np.ndarray, n_bin
 def compare_distributions(feature: str, reference: np.ndarray, current: np.ndarray) -> DriftResult:
     psi = population_stability_index(reference, current)
     ks_stat, ks_pvalue = stats.ks_2samp(reference, current)
-    return DriftResult(feature=feature, psi=psi, ks_statistic=float(ks_stat), ks_pvalue=float(ks_pvalue))
+    return DriftResult(
+        feature=feature, psi=psi, ks_statistic=float(ks_stat), ks_pvalue=float(ks_pvalue)
+    )
 
 
 def compare_all_features(reference_df, current_df, features: list[str]) -> list[DriftResult]:
     results = []
     for feature in features:
-        if feature not in current_df.columns or current_df[feature].dropna().empty:
+        if (
+            feature not in current_df.columns
+            or feature not in reference_df.columns
+            or current_df[feature].dropna().empty
+            or reference_df[feature].dropna().empty
+        ):
             continue
         result = compare_distributions(
             feature,
